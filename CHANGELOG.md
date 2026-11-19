@@ -18,7 +18,7 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   when `[evaluation] model` is not set. `allowed_tools` and `max_turns` have no
   Cursor equivalent (the former prints a warning). Cursor-judged evaluations
   are stamped `evaluator_model = "cursor/<model>"`, so they are averaged in a
-  separate cluster from a Claude judge with the same model name. ([#NN])
+  separate cluster from a Claude judge with the same model name. ([#4])
 
 ### Changed
 - **Bundled Codex examples run on `gpt-6.1-sol`.** Every Codex variant in the
@@ -748,4 +748,5 @@ Initial release under the **nasde-toolkit** name (rebrand from
 [#88]: https://github.com/NoesisVision/nasde-toolkit/pull/88
 [#89]: https://github.com/NoesisVision/nasde-toolkit/pull/89
 [#90]: https://github.com/NoesisVision/nasde-toolkit/pull/90
+[#4]: https://github.com/krzykrucz/nasde-toolkit/pull/4
 [gh-litellm-2026-04]: https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862
