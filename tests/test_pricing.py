@@ -8,11 +8,14 @@ from pathlib import Path
 import pytest
 
 from nasde_toolkit.pricing import (
+    ModelPrice,
     compute_cost_usd,
     effective_pricing_with_source,
     load_pricing,
     load_pricing_layered,
+    normalize_model_slug,
     pricing_as_of,
+    resolve_catalog_key,
     resolve_pricing_layers,
 )
 
@@ -277,3 +280,126 @@ def test_effective_pricing_with_source_three_layers(tmp_path: Path, empty_user_l
 def test_load_pricing_layered_matches_effective_keys(tmp_path: Path, empty_user_layer: Path) -> None:
     _write_pricing(tmp_path, _model_block("my-model", 7.0, 8.0))
     assert set(load_pricing_layered(tmp_path)) == set(effective_pricing_with_source(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("slug", "expected"),
+    [
+        ("claude-opus-5-5-high", "claude-opus-5-5"),
+        ("claude-sonnet-5-5-xhigh", "claude-sonnet-5-5"),
+        ("claude-fable-5-thinking-high", "claude-fable-5"),
+        ("claude-fable-5-thinking", "claude-fable-5"),
+        ("gpt-5.6-sol-none", "gpt-5.6-sol"),
+        ("gpt-5.3-codex-xhigh", "gpt-5.3-codex"),
+        ("muse-wonder-1.0-minimal", "muse-wonder-1.0"),
+        ("composer-2.5[effort=high]", "composer-2.5"),
+        ("claude-opus-4-8[context=1m,effort=high,fast=false]", "claude-opus-4-8"),
+        ("cursor/claude-opus-5-5-high", "cursor/claude-opus-5-5"),
+        ("composer-2.5", "composer-2.5"),
+        ("claude-opus-5-5-fast", "claude-opus-5-5-fast"),
+        ("claude-opus-4-8[fast=true]", "claude-opus-4-8[fast=true]"),
+        ("claude-opus-4-8[effort=high,fast=true]", "claude-opus-4-8[effort=high,fast=true]"),
+        ("claude-opus-4-8[fast=false]", "claude-opus-4-8"),
+        ("gpt-5.4-mini", "gpt-5.4-mini"),
+    ],
+)
+def test_normalize_model_slug(slug: str, expected: str) -> None:
+    assert normalize_model_slug(slug) == expected
+
+
+def test_resolve_catalog_key_prefers_exact_match() -> None:
+    catalog = {"cursor/claude-opus-5-5-high": 1, "cursor/claude-opus-5-5": 2, "claude-opus-5-5": 3}
+    assert resolve_catalog_key("cursor/claude-opus-5-5-high", catalog) == "cursor/claude-opus-5-5-high"
+
+
+def test_resolve_catalog_key_then_prefixed_base() -> None:
+    catalog = {"cursor/claude-opus-5-5": 2, "claude-opus-5-5": 3}
+    assert resolve_catalog_key("cursor/claude-opus-5-5-high", catalog) == "cursor/claude-opus-5-5"
+
+
+def test_resolve_catalog_key_then_unprefixed_slug() -> None:
+    catalog = {"claude-opus-5-5-high": 4, "claude-opus-5-5": 3}
+    assert resolve_catalog_key("cursor/claude-opus-5-5-high", catalog) == "claude-opus-5-5-high"
+
+
+def test_resolve_catalog_key_then_vendor_base() -> None:
+    catalog = {"claude-opus-5-5": 3}
+    assert resolve_catalog_key("cursor/claude-opus-5-5-high", catalog) == "claude-opus-5-5"
+
+
+def test_resolve_catalog_key_fast_true_is_unpriced() -> None:
+    catalog = {"claude-opus-4-8": 3}
+    assert resolve_catalog_key("cursor/claude-opus-4-8[fast=true]", catalog) is None
+    assert resolve_catalog_key("cursor/claude-opus-4-8[effort=high,fast=true]", catalog) is None
+
+
+def test_resolve_catalog_key_unknown_is_none() -> None:
+    assert resolve_catalog_key("cursor/auto", {"claude-opus-5-5": 3}) is None
+
+
+def test_resolve_catalog_key_bare_model_never_reaches_cursor_entry() -> None:
+    catalog = {"cursor/claude-opus-5-5": 2, "claude-opus-5-5": 3}
+    assert resolve_catalog_key("claude-opus-5-5", catalog) == "claude-opus-5-5"
+    assert resolve_catalog_key("claude-sonnet-5-5", {"cursor/claude-sonnet-5-5": 2}) is None
+
+
+def test_resolve_catalog_key_strips_google_prefix() -> None:
+    catalog = {"gemini-3-flash-preview": 1}
+    assert resolve_catalog_key("google/gemini-3-flash-preview", catalog) == "gemini-3-flash-preview"
+
+
+def test_compute_cost_uses_normalized_key() -> None:
+    pricing = {"m": ModelPrice(input_per_1m=1.0, output_per_1m=2.0)}
+    assert compute_cost_usd(1_000_000, 1_000_000, "cursor/m-high", pricing) == pytest.approx(3.0)
+
+
+def test_pricing_as_of_uses_normalized_key() -> None:
+    pricing = {"m": ModelPrice(input_per_1m=1.0, output_per_1m=2.0, as_of="2026-11-19")}
+    assert pricing_as_of("cursor/m-high", pricing) == "2026-11-19"
+
+
+CURSOR_CLAUDE_BASES = sorted(
+    name
+    for name, price in load_pricing().items()
+    if name.startswith("claude-") and price.cache_write_per_1m is not None
+)
+
+
+def test_cursor_claude_bases_cover_the_whole_claude_catalog() -> None:
+    assert {"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-fable-5-1"} <= set(CURSOR_CLAUDE_BASES)
+    assert "claude-haiku-4-5" in CURSOR_CLAUDE_BASES
+
+
+@pytest.mark.parametrize("base", CURSOR_CLAUDE_BASES)
+def test_cursor_claude_entries_bill_cache_writes_at_the_5_minute_rate(base: str) -> None:
+    pricing = load_pricing()
+    cursor_price = pricing[f"cursor/{base}"]
+    vendor_price = pricing[base]
+    assert cursor_price.cache_write_per_1m == pytest.approx(cursor_price.input_per_1m * 1.25)
+    assert cursor_price.input_per_1m == vendor_price.input_per_1m
+    assert cursor_price.output_per_1m == vendor_price.output_per_1m
+    assert cursor_price.cached_input_per_1m == vendor_price.cached_input_per_1m
+
+
+def test_cursor_trial_uses_cursor_rate_while_claude_code_keeps_vendor_rate() -> None:
+    pricing = load_pricing()
+    cursor_cost = compute_cost_usd(1_000_000, 0, "cursor/claude-opus-5-5-high", pricing, cache_write_tokens=1_000_000)
+    claude_code_cost = compute_cost_usd(1_000_000, 0, "claude-opus-5-5", pricing, cache_write_tokens=1_000_000)
+    assert cursor_cost == pytest.approx(5.0)
+    assert claude_code_cost == pytest.approx(8.0)
+
+
+def test_cursor_gpt_falls_through_to_vendor_entry() -> None:
+    assert resolve_catalog_key("cursor/gpt-5.6-sol-high", load_pricing()) == "gpt-5.6-sol"
+
+
+def test_cursor_auto_is_unpriced() -> None:
+    assert resolve_catalog_key("cursor/auto", load_pricing()) is None
+
+
+def test_cursor_composer_is_priced() -> None:
+    price = load_pricing()["cursor/composer-2.5"]
+    assert (price.input_per_1m, price.output_per_1m, price.cached_input_per_1m) == (0.5, 2.5, 0.2)
+    assert price.cache_write_per_1m is None
+    assert price.as_of == "2026-11-19"
+    assert price.source == "https://cursor.com/docs/models-and-pricing"

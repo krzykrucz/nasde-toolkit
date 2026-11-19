@@ -382,6 +382,46 @@ def test_export_pricing_used_layer_bundled(job_dir: Path, tmp_path: Path, empty_
     assert report["claude-sonnet-5-5"]["input_per_1m"] == 2.0
 
 
+def test_export_pricing_used_records_catalog_key(job_dir: Path, tmp_path: Path, empty_user_layer: Path) -> None:
+    for trial in ("demo-task__aaa111", "demo-task__bbb222"):
+        config_path = job_dir / trial / "config.json"
+        config = json.loads(config_path.read_text())
+        config["agent"]["model_name"] = "cursor/claude-opus-5-5-high"
+        config_path.write_text(json.dumps(config))
+
+    dest = tmp_path / "export"
+    export_results([job_dir], dest)
+    report = json.loads((dest / "pricing_used.json").read_text())
+
+    entry = report["cursor/claude-opus-5-5-high"]
+    assert entry["catalog_key"] == "cursor/claude-opus-5-5"
+    assert entry["layer"] == "bundled"
+    assert entry["input_per_1m"] == 4.0
+
+
+def test_export_metrics_include_agent_reported_cost(job_dir: Path, tmp_path: Path) -> None:
+    trajectory_path = job_dir / "demo-task__aaa111" / "agent" / "trajectory.json"
+    trajectory = json.loads(trajectory_path.read_text())
+    trajectory["final_metrics"]["total_cost_usd"] = 1.23
+    trajectory["final_metrics"]["extra"]["cost_source"] = "litellm"
+    trajectory_path.write_text(json.dumps(trajectory))
+
+    dest = tmp_path / "export"
+    export_results([job_dir], dest)
+    metrics = json.loads((dest / "2026-06-03__demo-job__demo-task__aaa111" / "metrics.json").read_text())
+
+    assert metrics["agent_reported_cost_usd"] == pytest.approx(1.23)
+    assert metrics["agent_reported_cost_source"] == "litellm"
+
+
+def test_export_pricing_used_exact_match_catalog_key(job_dir: Path, tmp_path: Path, empty_user_layer: Path) -> None:
+    dest = tmp_path / "export"
+    export_results([job_dir], dest)
+    report = json.loads((dest / "pricing_used.json").read_text())
+
+    assert report["claude-sonnet-5-5"]["catalog_key"] == "claude-sonnet-5-5"
+
+
 def test_capture_patch_includes_non_ascii_untracked_filename(tmp_path: Path) -> None:
     workspace = tmp_path / "artifacts" / "workspace"
     workspace.mkdir(parents=True)
