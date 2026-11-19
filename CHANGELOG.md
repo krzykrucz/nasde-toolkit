@@ -15,14 +15,14 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   rate, at Cursor's rates, which bill cache writes at 1.25x input instead of the
   2x Claude Code uses; GPT models fall through to the vendor entries). `assessment_summary.json` and `metrics.json` also record the agent's
   own cost figure as `agent_reported_cost_usd` / `agent_reported_cost_source`
-  for audit; `cost_usd` is unchanged as the source of truth. ([#NN])
+  for audit; `cost_usd` is unchanged as the source of truth. ([#2])
 - **Cursor CLI agent.** Variants can set `agent = "cursor"` to benchmark
   Cursor's `cursor-agent`. They use `AGENTS.md` (injected into `/app/AGENTS.md`)
   and `agents_skills/` (registered natively into `~/.cursor/skills`), like Codex
   variants. Authenticate with `CURSOR_API_KEY`. Write the model as Cursor lists it
   (`cursor-agent --list-models`); nasde records it as `cursor/<model>` and prices
   it from the `cursor/` catalog entries. MCP servers declared by the task are
-  auto-approved. Example: `examples/ddd-architectural-challenges/variants/cursor-vanilla`. ([#NN])
+  auto-approved. Example: `examples/ddd-architectural-challenges/variants/cursor-vanilla`. ([#3])
 
 ### Changed
 - **Price lookup falls back through effort suffixes and provider prefixes.** A
@@ -31,7 +31,7 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   `claude-opus-5-5-high`, `claude-opus-5-5` found in the catalog; an exact entry
   always wins. A `[fast=true]` bracket option is never stripped, so fast-mode
   slugs stay unpriced instead of taking the standard rate. The "Pricing used" table and `pricing_used.json` (new
-  `catalog_key` field) show which entry was used. ([#NN])
+  `catalog_key` field) show which entry was used. ([#2])
 - **Bundled Codex examples run on `gpt-6.1-sol`.** Every Codex variant in the
   examples moves from `gpt-5.4` (no longer offered to ChatGPT-plan accounts) to
   OpenAI's current coding workhorse; the authoring skills list the current
@@ -58,7 +58,7 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
 
 ### Fixed
 - Cache writes reported by Cursor trajectories (`usage_totals.cacheWriteTokens`)
-  are now counted in `token_usage.cache_write_tokens` and priced. ([#NN])
+  are now counted in `token_usage.cache_write_tokens` and priced. ([#2])
 - `--with-opik` records one span per agent step. Each step was emitted twice,
   which doubled the token totals Opik shows for Codex runs; nasde's own
   `assessment_summary.json` / `metrics.json` economics were not affected.
@@ -761,4 +761,6 @@ Initial release under the **nasde-toolkit** name (rebrand from
 [#88]: https://github.com/NoesisVision/nasde-toolkit/pull/88
 [#89]: https://github.com/NoesisVision/nasde-toolkit/pull/89
 [#90]: https://github.com/NoesisVision/nasde-toolkit/pull/90
+[#2]: https://github.com/krzykrucz/nasde-toolkit/pull/2
+[#3]: https://github.com/krzykrucz/nasde-toolkit/pull/3
 [gh-litellm-2026-04]: https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862
