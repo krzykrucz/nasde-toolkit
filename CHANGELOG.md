@@ -10,6 +10,11 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
 ## [Unreleased]
 
 ### Added
+- **Cursor variants in the DDD example.** `examples/ddd-architectural-challenges`
+  gains `cursor-guided` and `cursor-ntcoding-tactical-ddd` (mirroring the Codex
+  variants; `AGENTS.md` and, for the tactical-DDD one, a native `agents_skills/`
+  skill) next to `cursor-vanilla`, all on `composer-2.5`, so the same tasks can
+  be run under Cursor. ([#NN])
 - **Cursor pricing.** The bundled price catalog gains `cursor/` entries
   (Composer 2.5, and every Claude model in the catalog that has a cache-write
   rate, at Cursor's rates, which bill cache writes at 1.25x input instead of the
