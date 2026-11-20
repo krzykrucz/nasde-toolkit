@@ -14,7 +14,7 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   gains `cursor-guided` and `cursor-ntcoding-tactical-ddd` (mirroring the Codex
   variants; `AGENTS.md` and, for the tactical-DDD one, a native `agents_skills/`
   skill) next to `cursor-vanilla`, all on `composer-2.5`, so the same tasks can
-  be run under Cursor. ([#NN])
+  be run under Cursor. ([#7])
 - **Cursor pricing.** The bundled price catalog gains `cursor/` entries
   (Composer 2.5, and every Claude model in the catalog that has a cache-write
   rate, at Cursor's rates, which bill cache writes at 1.25x input instead of the
@@ -778,4 +778,5 @@ Initial release under the **nasde-toolkit** name (rebrand from
 [#2]: https://github.com/krzykrucz/nasde-toolkit/pull/2
 [#3]: https://github.com/krzykrucz/nasde-toolkit/pull/3
 [#4]: https://github.com/krzykrucz/nasde-toolkit/pull/4
+[#7]: https://github.com/krzykrucz/nasde-toolkit/pull/7
 [gh-litellm-2026-04]: https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862
