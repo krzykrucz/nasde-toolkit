@@ -80,7 +80,7 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
 - `--with-opik` now shows cost and tokens for Cursor runs. Cursor reports usage
   only for the whole session, never per step, so its agent steps were never
   sent to Opik and the trace cost stayed empty. Those steps are now sent, plus
-  one `agent_session` span carrying the session's tokens and cost.
+  one `agent_session` span carrying the session's tokens and cost. ([#8])
 
 ## [0.7.0] — 2026-10-15
 
@@ -783,4 +783,5 @@ Initial release under the **nasde-toolkit** name (rebrand from
 [#3]: https://github.com/krzykrucz/nasde-toolkit/pull/3
 [#4]: https://github.com/krzykrucz/nasde-toolkit/pull/4
 [#7]: https://github.com/krzykrucz/nasde-toolkit/pull/7
+[#8]: https://github.com/krzykrucz/nasde-toolkit/pull/8
 [gh-litellm-2026-04]: https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862
