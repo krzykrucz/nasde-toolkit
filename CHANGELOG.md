@@ -23,6 +23,15 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   (`cursor-agent --list-models`); nasde records it as `cursor/<model>` and prices
   it from the `cursor/` catalog entries. MCP servers declared by the task are
   auto-approved. Example: `examples/ddd-architectural-challenges/variants/cursor-vanilla`. ([#3])
+- **Cursor judge backend.** `[evaluation] backend = "cursor"` (or
+  `nasde eval --eval-backend cursor`) scores trials with `cursor-agent` in
+  read-only `--mode ask`, run from a temporary workspace so nothing it writes
+  ends up in the agent's diff. It uses `CURSOR_API_KEY` or your
+  `cursor-agent login`, and defaults the judge model to `claude-opus-5-5-high`
+  when `[evaluation] model` is not set. `allowed_tools` and `max_turns` have no
+  Cursor equivalent (the former prints a warning). Cursor-judged evaluations
+  are stamped `evaluator_model = "cursor/<model>"`, so they are averaged in a
+  separate cluster from a Claude judge with the same model name. ([#4])
 
 ### Changed
 - **Price lookup falls back through effort suffixes and provider prefixes.** A
@@ -763,4 +772,5 @@ Initial release under the **nasde-toolkit** name (rebrand from
 [#90]: https://github.com/NoesisVision/nasde-toolkit/pull/90
 [#2]: https://github.com/krzykrucz/nasde-toolkit/pull/2
 [#3]: https://github.com/krzykrucz/nasde-toolkit/pull/3
+[#4]: https://github.com/krzykrucz/nasde-toolkit/pull/4
 [gh-litellm-2026-04]: https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862
