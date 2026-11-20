@@ -778,7 +778,7 @@ def _print_run_header(
     env_str = harbor_env or "docker"
     attempts_str = f"{attempts}" if attempts > 1 else "1"
     timeout_str = f"{timeout}s (override)" if timeout is not None else "per task.toml"
-    agent_labels = {"codex": "Codex (OpenAI)", "gemini": "Gemini CLI (Google)"}
+    agent_labels = {"codex": "Codex (OpenAI)", "gemini": "Gemini CLI (Google)", "cursor": "Cursor"}
     agent_label = agent_labels.get(agent_type, "Claude Code")
     effort_str = effort or "family default"
     console.print(
