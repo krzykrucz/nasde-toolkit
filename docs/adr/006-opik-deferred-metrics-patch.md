@@ -43,17 +43,3 @@ monkey-patch in `runner.py` was adapted accordingly; semantics unchanged.
 The `__internal_api__span__` double-underscore naming is a deliberate
 "internal, may change" signal from Opik maintainers. Re-verify this patch
 at every opik minor bump.
-
-## 2026-11-20 update: session-level metrics (Cursor CLI)
-
-Harbor's `CursorCli` never assigns `step.metrics`: `cursor-agent` reports
-usage and cost only once per session, so the totals live on
-`Trajectory.final_metrics`. Under the deferred patch its agent steps waited
-for a `metrics` assignment that never came, so no agent step reached Opik
-and the trace's cost and tokens were empty. The patch now also wraps
-`Trajectory.__init__`, which runs inside the trial's trace context. It flushes
-agent steps that are still pending, and when no step carried usage it emits a
-single `agent_session` LLM span with the session's usage and
-`total_cost = final_metrics.total_cost_usd`. Agents with per-step usage
-(Claude, Codex) are unaffected, and the span is emitted at most once per
-trace.

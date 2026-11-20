@@ -77,10 +77,6 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   which doubled the token totals Opik shows for Codex runs; nasde's own
   `  assessment_summary.json` / `metrics.json` economics were not affected.
   ([#88])
-- `--with-opik` now shows cost and tokens for Cursor runs. Cursor reports usage
-  only for the whole session, never per step, so its agent steps were never
-  sent to Opik and the trace cost stayed empty. Those steps are now sent, plus
-  one `agent_session` span carrying the session's tokens and cost. ([#8])
 
 ## [0.7.0] — 2026-10-15
 
