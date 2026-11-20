@@ -75,7 +75,7 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   are now counted in `token_usage.cache_write_tokens` and priced. ([#2])
 - `--with-opik` records one span per agent step. Each step was emitted twice,
   which doubled the token totals Opik shows for Codex runs; nasde's own
-  `assessment_summary.json` / `metrics.json` economics were not affected.
+  `  assessment_summary.json` / `metrics.json` economics were not affected.
   ([#88])
 
 ## [0.7.0] — 2026-10-15
@@ -779,4 +779,5 @@ Initial release under the **nasde-toolkit** name (rebrand from
 [#3]: https://github.com/krzykrucz/nasde-toolkit/pull/3
 [#4]: https://github.com/krzykrucz/nasde-toolkit/pull/4
 [#7]: https://github.com/krzykrucz/nasde-toolkit/pull/7
+[#8]: https://github.com/krzykrucz/nasde-toolkit/pull/8
 [gh-litellm-2026-04]: https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862

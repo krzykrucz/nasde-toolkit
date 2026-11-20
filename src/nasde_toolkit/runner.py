@@ -961,6 +961,12 @@ def _patch_opik_deferred_metrics() -> None:
     layer), replacing opik's eager span rather than stacking on it — otherwise
     every step is emitted twice and Opik double-counts tokens.
 
+    Some harnesses (Cursor CLI) never assign per-step metrics: usage and cost
+    exist only on the trajectory's ``final_metrics``. ``Trajectory.__init__`` is
+    therefore patched too: it flushes agent steps still waiting for metrics and,
+    when no step carried token usage, emits one ``agent_session`` span with the
+    session usage and ``total_cost`` — without it the Opik trace cost is empty.
+
     Origin: SDLC repo commit 66c2c11 (2026-03-09).
     Remove when: opik changelog mentions harbor token/metrics fix.
     """
@@ -968,10 +974,13 @@ def _patch_opik_deferred_metrics() -> None:
 
     import opik
     from harbor.models.trajectories.step import Step
+    from harbor.models.trajectories.trajectory import Trajectory
     from opik import datetime_helpers, id_helpers, opik_context
 
     if getattr(_patch_opik_deferred_metrics, "_applied", False):
         return
+
+    traces_with_session_span: set[str] = set()
 
     def _build_usage_from_metrics(
         metrics: Any,
@@ -1082,8 +1091,78 @@ def _patch_opik_deferred_metrics() -> None:
             return
         _create_span_for_step(self)
 
+    def _step_has_usage(step: Step) -> bool:
+        metrics = step.metrics
+        return bool(metrics and (metrics.prompt_tokens or metrics.completion_tokens))
+
+    def _build_session_usage(final_metrics: Any) -> dict[str, Any] | None:
+        usage: dict[str, Any] = {}
+        if final_metrics.total_prompt_tokens is not None:
+            usage["prompt_tokens"] = final_metrics.total_prompt_tokens
+        if final_metrics.total_completion_tokens is not None:
+            usage["completion_tokens"] = final_metrics.total_completion_tokens
+        if final_metrics.total_prompt_tokens and final_metrics.total_completion_tokens:
+            usage["total_tokens"] = final_metrics.total_prompt_tokens + final_metrics.total_completion_tokens
+        return usage or None
+
+    def _earliest_step_start(trajectory: Trajectory) -> Any:
+        timestamps = sorted(step.timestamp for step in trajectory.steps if step.timestamp)
+        return datetime_helpers.parse_iso_timestamp(timestamps[0]) if timestamps else None
+
+    def _flush_pending_agent_steps(trajectory: Trajectory) -> None:
+        for step in trajectory.steps:
+            if getattr(step, "_opik_trace_data", None) is not None and not getattr(step, "_opik_span_emitted", True):
+                _create_span_for_step(step)
+
+    def _create_session_span(trajectory: Trajectory) -> None:
+        final_metrics = trajectory.final_metrics
+        if final_metrics is None or any(_step_has_usage(step) for step in trajectory.steps):
+            return
+        usage = _build_session_usage(final_metrics)
+        if usage is None and final_metrics.total_cost_usd is None:
+            return
+        trace_data = opik_context.get_current_trace_data()
+        if trace_data is None or trace_data.id in traces_with_session_span:
+            return
+        traces_with_session_span.add(trace_data.id)
+        parent_span = opik_context.get_current_span_data()
+        try:
+            client = opik.get_global_client()
+            client.__internal_api__span__(
+                id=id_helpers.generate_id(),
+                trace_id=trace_data.id,
+                parent_span_id=parent_span.id if parent_span else None,
+                name="agent_session",
+                type="llm",
+                start_time=_earliest_step_start(trajectory),
+                metadata={
+                    "created_from": "nasde",
+                    "session_id": trajectory.session_id,
+                    "cost_source": (final_metrics.extra or {}).get("cost_source"),
+                },
+                usage=usage,
+                total_cost=final_metrics.total_cost_usd,
+                model=trajectory.agent.model_name,
+                tags=["harbor", "agent", "session"],
+                project_name=(
+                    getattr(trace_data, "project_name", None)
+                    or os.environ.get("OPIK_PROJECT_NAME")
+                    or "Default Project"
+                ),
+            )
+        except Exception:
+            pass
+
+    original_trajectory_init = Trajectory.__init__
+
+    def patched_trajectory_init(self: Trajectory, *args: Any, **kwargs: Any) -> None:
+        original_trajectory_init(self, *args, **kwargs)
+        _flush_pending_agent_steps(self)
+        _create_session_span(self)
+
     Step.__init__ = patched_init  # type: ignore[assignment]
     Step.__setattr__ = patched_setattr  # type: ignore[assignment]
+    Trajectory.__init__ = patched_trajectory_init  # type: ignore[method-assign]
     _patch_opik_deferred_metrics._applied = True  # type: ignore[attr-defined]
 
 
