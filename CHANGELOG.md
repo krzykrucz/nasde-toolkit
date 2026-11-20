@@ -75,8 +75,12 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   are now counted in `token_usage.cache_write_tokens` and priced. ([#2])
 - `--with-opik` records one span per agent step. Each step was emitted twice,
   which doubled the token totals Opik shows for Codex runs; nasde's own
-  `assessment_summary.json` / `metrics.json` economics were not affected.
+  `  assessment_summary.json` / `metrics.json` economics were not affected.
   ([#88])
+- `--with-opik` now shows cost and tokens for Cursor runs. Cursor reports usage
+  only for the whole session, never per step, so its agent steps were never
+  sent to Opik and the trace cost stayed empty. Those steps are now sent, plus
+  one `agent_session` span carrying the session's tokens and cost.
 
 ## [0.7.0] — 2026-10-15
 
