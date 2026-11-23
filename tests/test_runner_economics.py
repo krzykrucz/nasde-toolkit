@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 
 from nasde_toolkit.runner import (
     _collect_economics_rows,
@@ -14,6 +15,7 @@ from nasde_toolkit.runner import (
     _fmt_tokens,
     _job_dir_from_config,
     _print_job_summary,
+    _print_pricing_used,
     _sample_std,
     _short_label,
 )
@@ -53,6 +55,8 @@ def test_short_label_strips_family_and_skill_prefixes() -> None:
     assert _short_label("claude-ntcoding-tactical-ddd-movie-tuned", "claude-sonnet-5-5") == "movie-tuned / sonnet-5-5"
     assert _short_label("claude-ntcoding-tactical-ddd", "claude-sonnet-5-5") == "tactical-ddd / sonnet-5-5"
     assert _short_label("codex-vanilla", "gpt-6.1-sol") == "vanilla / gpt-6.1-sol"
+    assert _short_label("cursor-vanilla", "cursor/composer-2.5") == "vanilla / composer-2.5"
+    assert _short_label("cursor-vanilla", "cursor/claude-opus-5-5-high") == "vanilla / opus-5-5-high"
 
 
 def test_sample_std_needs_two_points() -> None:
@@ -245,3 +249,13 @@ def test_economics_row_carries_model_name(tmp_path: Path) -> None:
 
     rows = _collect_economics_rows(job)
     assert {row["model"] for row in rows} == {"gpt-6.1-sol", "claude-sonnet-5-5"}
+
+
+def test_print_pricing_used_labels_normalized_matches(monkeypatch: pytest.MonkeyPatch, empty_user_layer: Path) -> None:
+    recorder = Console(width=250, height=25, record=True)
+    monkeypatch.setattr("nasde_toolkit.runner.console", recorder)
+
+    _print_pricing_used([{"model": "cursor/claude-opus-5-5-high"}], None)
+
+    output = recorder.export_text()
+    assert "cursor/claude-opus-5-5-high (priced as cursor/claude-opus-5-5)" in output

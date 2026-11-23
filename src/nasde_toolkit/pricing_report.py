@@ -11,6 +11,13 @@ from rich.table import Table
 from nasde_toolkit.pricing import ModelPrice
 
 
+def priced_as_label(model: str, catalog_key: str) -> str:
+    """Label a model with the catalog key that priced it, when the two differ."""
+    if model == catalog_key:
+        return model
+    return f"{model} (priced as {catalog_key})"
+
+
 def render_pricing_table(
     entries: dict[str, tuple[ModelPrice, str]],
     show_source: bool = False,

@@ -137,7 +137,7 @@ def _prepare_task_environments(config: ProjectConfig, variant_dir: Path) -> tupl
       **Claude** carrier (``/app/.claude/skills/...``), built unconditionally so
       Claude stays byte-identical and tested.
     - ``extra_skill_dirs`` — the same plugin / ``[[skill]]`` skill directories
-      as a host-path list, fed to **Codex/Gemini** through Harbor's native
+      as a host-path list, fed to **Codex/Cursor/Gemini** through Harbor's native
       ``config.agent.skills`` (those CLIs scan only a HOME-scoped dir, never the
       ``/app`` cwd the sandbox map targets). The claude-vs-native choice is made
       per agent at merge time in ``_refresh_agent_skills``. See ADR-012.
@@ -216,7 +216,7 @@ def _resolve_model(
     Priority: --model flag > variant.toml model. Every variant must
     declare a ``model`` field; the model defines the agent's behavior
     and cannot meaningfully default across agent families (claude,
-    codex, gemini). Raises SystemExit if no model is found.
+    codex, cursor, gemini). Raises SystemExit if no model is found.
     """
     if cli_model:
         return cli_model
@@ -251,7 +251,8 @@ def _resolve_effort(cli_effort: str | None, variant_dir: Path) -> str | None:
 
 
 def _ensure_auth(agent_import_path: str | None = None) -> None:
-    if _is_codex_agent(agent_import_path):
+    agent_type = _agent_type_from_import_path(agent_import_path)
+    if agent_type == "codex":
         if not os.environ.get("OPENAI_API_KEY") and os.environ.get("CODEX_API_KEY"):
             os.environ["OPENAI_API_KEY"] = os.environ["CODEX_API_KEY"]
         if os.environ.get("OPENAI_API_KEY"):
@@ -261,7 +262,7 @@ def _ensure_auth(agent_import_path: str | None = None) -> None:
             return
         console.print("[red]ERROR: Set CODEX_API_KEY, OPENAI_API_KEY, or run 'codex login' for OAuth[/red]")
         raise SystemExit(1)
-    if _is_gemini_agent(agent_import_path):
+    if agent_type == "gemini":
         if (
             os.environ.get("GEMINI_API_KEY")
             or os.environ.get("GOOGLE_API_KEY")
@@ -270,6 +271,11 @@ def _ensure_auth(agent_import_path: str | None = None) -> None:
         ):
             return
         console.print("[red]ERROR: Set GEMINI_API_KEY, GOOGLE_API_KEY, or run 'gemini login' for OAuth[/red]")
+        raise SystemExit(1)
+    if agent_type == "cursor":
+        if os.environ.get("CURSOR_API_KEY"):
+            return
+        console.print("[red]ERROR: Set CURSOR_API_KEY (create a User API key in the Cursor dashboard)[/red]")
         raise SystemExit(1)
     if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         return
@@ -337,7 +343,7 @@ def _collect_sandbox_files(variant_dir: Path) -> dict[str, str]:
     """Build the sandbox_files map for a variant.
 
     Only Claude skills ride sandbox_files (its cwd ``.claude/skills/`` is a
-    discovery root). Codex/Gemini skills are NOT collected here — they go
+    discovery root). Codex/Cursor/Gemini skills are NOT collected here — they go
     through Harbor's native ``config.agent.skills`` list via
     ``_collect_native_skill_dirs`` / ``_refresh_agent_skills`` (see ADR-012).
     """
@@ -377,14 +383,14 @@ def _collect_claude_skills(variant_dir: Path, sandbox_files: dict[str, str]) -> 
             stage_skill_dir(skill_dir, sandbox_files)
 
 
-_AGENT_SKILLS_SUBDIR = {"codex": "agents_skills", "gemini": "gemini_skills"}
+_AGENT_SKILLS_SUBDIR = {"codex": "agents_skills", "cursor": "agents_skills", "gemini": "gemini_skills"}
 
 
 def _collect_native_skill_dirs(variant_dir: Path, agent_type: str) -> list[str]:
     """Return host skill-dir paths to hand to Harbor's native skill injection.
 
-    Codex and Gemini auto-discover skills only from a HOME-scoped location
-    (``$HOME/.agents/skills`` for Codex, ``~/.gemini/skills`` for Gemini), never
+    Codex, Cursor and Gemini auto-discover skills only from a HOME-scoped location
+    (``$HOME/.agents/skills`` for Codex, ``~/.cursor/skills`` for Cursor, ``~/.gemini/skills`` for Gemini), never
     from a ``.agents/skills`` / ``.gemini/skills`` dir sitting in the agent's
     ``/app`` cwd. Uploading skill files there via ``sandbox_files`` (the old
     path) put them where the CLI never scans, so they were never registered as
@@ -439,20 +445,20 @@ def _warn_if_skill_frontmatter_malformed(skill_md: Path, agent_type: str) -> Non
         return
     console.print(
         f"[yellow]WARNING ({agent_type}): {skill_md} does not start with a '---' YAML "
-        "frontmatter line. Codex/Gemini may refuse to register the skill "
+        "frontmatter line. Codex/Cursor/Gemini may refuse to register the skill "
         "('missing YAML frontmatter delimited by ---'). Move any leading comment "
         "below the closing '---'.[/yellow]"
     )
 
 
-_VALID_AGENT_TYPES = {"claude", "codex", "gemini"}
+_VALID_AGENT_TYPES = {"claude", "codex", "cursor", "gemini"}
 
 
 def load_variant_config(variant_dir: Path) -> dict:
     """Read variant.toml and return its contents as a dict.
 
     Every variant directory must contain a ``variant.toml`` with at least
-    an ``agent`` field set to ``"claude"`` or ``"codex"``.
+    an ``agent`` field set to one of ``_VALID_AGENT_TYPES``.
     """
     variant_toml = variant_dir / "variant.toml"
     if not variant_toml.exists():
@@ -524,6 +530,8 @@ def scope_tasks_for_variant(
 def _agent_import_path(agent_type: str) -> str:
     if agent_type == "codex":
         return "nasde_toolkit.agents.configurable_codex:ConfigurableCodex"
+    if agent_type == "cursor":
+        return "nasde_toolkit.agents.configurable_cursor:ConfigurableCursor"
     if agent_type == "gemini":
         return "nasde_toolkit.agents.configurable_gemini:ConfigurableGemini"
     return "nasde_toolkit.agents.configurable_claude:ConfigurableClaude"
@@ -531,6 +539,10 @@ def _agent_import_path(agent_type: str) -> str:
 
 def _is_codex_agent(agent_import_path: str | None) -> bool:
     return bool(agent_import_path and "codex" in agent_import_path.lower())
+
+
+def _is_cursor_agent(agent_import_path: str | None) -> bool:
+    return bool(agent_import_path and "cursor" in agent_import_path.lower())
 
 
 def _is_gemini_agent(agent_import_path: str | None) -> bool:
@@ -567,7 +579,7 @@ def _ensure_harbor_config(
     pointing at now-deleted worktree paths.
 
     ``extra_skill_dirs`` carries the same plugin / ``[[skill]]`` directories as
-    a host-path list for the Codex/Gemini native channel (``config.agent.skills``);
+    a host-path list for the Codex/Cursor/Gemini native channel (``config.agent.skills``);
     Claude ignores it (its copies ride ``extra_sandbox_files``). See ADR-012.
     """
     harbor_config_path = variant_dir / "harbor_config.json"
@@ -674,7 +686,7 @@ def _refresh_agent_skills(
     """Rebuild the agent's ``skills`` list, preserving hand-authored entries.
 
     nasde owns the entries derived from **two** sources, both routed through
-    Harbor's native ``config.agent.skills`` for Codex/Gemini:
+    Harbor's native ``config.agent.skills`` for Codex/Cursor/Gemini:
 
     1. the variant's ``agents_skills/`` / ``gemini_skills/`` snapshot subdirs
        (``_collect_native_skill_dirs``), and
@@ -714,7 +726,7 @@ def _referenced_skill_dirs_for_agent(effective_type: str, extra_skill_dirs: list
 
     Claude's referenced/plugin skills already ride ``sandbox_files`` to its
     cwd ``/app/.claude/skills`` discovery root, so feeding them here too would
-    double-inject. Codex/Gemini get the dir list and warn on bad frontmatter.
+    double-inject. Codex/Cursor/Gemini get the dir list and warn on bad frontmatter.
     """
     if effective_type == "claude":
         return []
@@ -750,6 +762,8 @@ def _agent_type_from_import_path(import_path: str | None) -> str | None:
     """Map an agent import_path back to its ``agent`` type, or None if unknown."""
     if _is_codex_agent(import_path):
         return "codex"
+    if _is_cursor_agent(import_path):
+        return "cursor"
     if _is_gemini_agent(import_path):
         return "gemini"
     if import_path and "claude" in import_path.lower():
@@ -833,6 +847,7 @@ def _build_merged_config(
 
     for agent in variant.get("agents", []):
         agent.setdefault("model_name", model)
+        agent["model_name"] = _qualify_model_name(agent.get("import_path"), agent["model_name"])
         if timeout_sec is not None:
             agent.setdefault("override_timeout_sec", timeout_sec)
         if reasoning_effort is not None:
@@ -865,6 +880,20 @@ def _build_merged_config(
         merged["environment"] = {"type": harbor_env}
 
     return merged
+
+
+def _qualify_model_name(import_path: str | None, model_name: str) -> str:
+    """Qualify a Cursor model name as ``cursor/<slug>``.
+
+    ``cursor/<slug>`` is the ``provider/model`` form Harbor's CursorCli requires,
+    and it is what keys the harness-scoped ``cursor/`` price entries (ADR-015).
+    A bare slug is prefixed and any other provider prefix (``anthropic/<slug>``)
+    is replaced, so Cursor trials always reach the ``cursor/`` price entries.
+    Other agents' model names pass through unchanged.
+    """
+    if _agent_type_from_import_path(import_path) != "cursor":
+        return model_name
+    return f"cursor/{model_name.split('/', 1)[-1]}"
 
 
 def _build_registry(config: ProjectConfig, tasks_filter: list[str] | None) -> list[dict]:
@@ -932,6 +961,12 @@ def _patch_opik_deferred_metrics() -> None:
     layer), replacing opik's eager span rather than stacking on it — otherwise
     every step is emitted twice and Opik double-counts tokens.
 
+    Some harnesses (Cursor CLI) never assign per-step metrics: usage and cost
+    exist only on the trajectory's ``final_metrics``. ``Trajectory.__init__`` is
+    therefore patched too: it flushes agent steps still waiting for metrics and,
+    when no step carried token usage, emits one ``agent_session`` span with the
+    session usage and ``total_cost`` — without it the Opik trace cost is empty.
+
     Origin: SDLC repo commit 66c2c11 (2026-03-09).
     Remove when: opik changelog mentions harbor token/metrics fix.
     """
@@ -939,10 +974,13 @@ def _patch_opik_deferred_metrics() -> None:
 
     import opik
     from harbor.models.trajectories.step import Step
+    from harbor.models.trajectories.trajectory import Trajectory
     from opik import datetime_helpers, id_helpers, opik_context
 
     if getattr(_patch_opik_deferred_metrics, "_applied", False):
         return
+
+    traces_with_session_span: set[str] = set()
 
     def _build_usage_from_metrics(
         metrics: Any,
@@ -1053,8 +1091,78 @@ def _patch_opik_deferred_metrics() -> None:
             return
         _create_span_for_step(self)
 
+    def _step_has_usage(step: Step) -> bool:
+        metrics = step.metrics
+        return bool(metrics and (metrics.prompt_tokens or metrics.completion_tokens))
+
+    def _build_session_usage(final_metrics: Any) -> dict[str, Any] | None:
+        usage: dict[str, Any] = {}
+        if final_metrics.total_prompt_tokens is not None:
+            usage["prompt_tokens"] = final_metrics.total_prompt_tokens
+        if final_metrics.total_completion_tokens is not None:
+            usage["completion_tokens"] = final_metrics.total_completion_tokens
+        if final_metrics.total_prompt_tokens and final_metrics.total_completion_tokens:
+            usage["total_tokens"] = final_metrics.total_prompt_tokens + final_metrics.total_completion_tokens
+        return usage or None
+
+    def _earliest_step_start(trajectory: Trajectory) -> Any:
+        timestamps = sorted(step.timestamp for step in trajectory.steps if step.timestamp)
+        return datetime_helpers.parse_iso_timestamp(timestamps[0]) if timestamps else None
+
+    def _flush_pending_agent_steps(trajectory: Trajectory) -> None:
+        for step in trajectory.steps:
+            if getattr(step, "_opik_trace_data", None) is not None and not getattr(step, "_opik_span_emitted", True):
+                _create_span_for_step(step)
+
+    def _create_session_span(trajectory: Trajectory) -> None:
+        final_metrics = trajectory.final_metrics
+        if final_metrics is None or any(_step_has_usage(step) for step in trajectory.steps):
+            return
+        usage = _build_session_usage(final_metrics)
+        if usage is None and final_metrics.total_cost_usd is None:
+            return
+        trace_data = opik_context.get_current_trace_data()
+        if trace_data is None or trace_data.id in traces_with_session_span:
+            return
+        traces_with_session_span.add(trace_data.id)
+        parent_span = opik_context.get_current_span_data()
+        try:
+            client = opik.get_global_client()
+            client.__internal_api__span__(
+                id=id_helpers.generate_id(),
+                trace_id=trace_data.id,
+                parent_span_id=parent_span.id if parent_span else None,
+                name="agent_session",
+                type="llm",
+                start_time=_earliest_step_start(trajectory),
+                metadata={
+                    "created_from": "nasde",
+                    "session_id": trajectory.session_id,
+                    "cost_source": (final_metrics.extra or {}).get("cost_source"),
+                },
+                usage=usage,
+                total_cost=final_metrics.total_cost_usd,
+                model=trajectory.agent.model_name,
+                tags=["harbor", "agent", "session"],
+                project_name=(
+                    getattr(trace_data, "project_name", None)
+                    or os.environ.get("OPIK_PROJECT_NAME")
+                    or "Default Project"
+                ),
+            )
+        except Exception:
+            pass
+
+    original_trajectory_init = Trajectory.__init__
+
+    def patched_trajectory_init(self: Trajectory, *args: Any, **kwargs: Any) -> None:
+        original_trajectory_init(self, *args, **kwargs)
+        _flush_pending_agent_steps(self)
+        _create_session_span(self)
+
     Step.__init__ = patched_init  # type: ignore[assignment]
     Step.__setattr__ = patched_setattr  # type: ignore[assignment]
+    Trajectory.__init__ = patched_trajectory_init  # type: ignore[method-assign]
     _patch_opik_deferred_metrics._applied = True  # type: ignore[attr-defined]
 
 
@@ -1169,14 +1277,18 @@ def _print_job_summary(result: JobResult, job_dir: Path | None = None, project_d
 
 
 def _print_pricing_used(rows: list[dict], project_dir: Path | None) -> None:
-    from nasde_toolkit.pricing import effective_pricing_with_source
-    from nasde_toolkit.pricing_report import render_pricing_table
+    from nasde_toolkit.pricing import ModelPrice, effective_pricing_with_source, resolve_catalog_key
+    from nasde_toolkit.pricing_report import priced_as_label, render_pricing_table
 
     used_models = {row["model"] for row in rows if row["model"]}
     if not used_models:
         return
     effective = effective_pricing_with_source(project_dir)
-    entries = {model: effective[model] for model in used_models if model in effective}
+    entries: dict[str, tuple[ModelPrice, str]] = {}
+    for model in used_models:
+        catalog_key = resolve_catalog_key(model, effective)
+        if catalog_key is not None:
+            entries[priced_as_label(model, catalog_key)] = effective[catalog_key]
     if not entries:
         return
     console.print(render_pricing_table(entries, show_source=True, title="Pricing used (effective)"))
@@ -1283,9 +1395,9 @@ def _finalize_economics_row(label: tuple[str, str, str], agg: dict) -> dict:
 
 
 def _short_label(agent: str, model: str) -> str:
-    short_agent = agent.removeprefix("claude-").removeprefix("codex-").removeprefix("gemini-")
+    short_agent = agent.removeprefix("claude-").removeprefix("codex-").removeprefix("cursor-").removeprefix("gemini-")
     short_agent = short_agent.replace("ntcoding-tactical-ddd-", "").replace("ntcoding-tactical-ddd", "tactical-ddd")
-    short_model = model.removeprefix("claude-").removeprefix("google/")
+    short_model = model.removeprefix("cursor/").removeprefix("claude-").removeprefix("google/")
     return f"{short_agent} / {short_model}" if short_model else short_agent
 
 

@@ -279,3 +279,44 @@ def test_override_eval_judge_rejects_unknown_backend() -> None:
     config = ProjectConfig(name="test", evaluation=EvaluationConfig())
     with pytest.raises(typer.Exit):
         _override_eval_judge(config, model=None, backend="gemini")
+
+
+def test_override_eval_judge_cursor_switches_default_model() -> None:
+    from nasde_toolkit.cli import _override_eval_judge
+    from nasde_toolkit.config import EvaluationConfig, ProjectConfig
+
+    config = ProjectConfig(name="test", evaluation=EvaluationConfig())
+    _override_eval_judge(config, model=None, backend="cursor")
+    assert config.evaluation.backend == "cursor"
+    assert config.evaluation.model == "claude-opus-5-5-high"
+
+
+def test_override_eval_judge_cursor_keeps_custom_model() -> None:
+    from nasde_toolkit.cli import _override_eval_judge
+    from nasde_toolkit.config import EvaluationConfig, ProjectConfig
+
+    config = ProjectConfig(name="test", evaluation=EvaluationConfig(model="claude-sonnet-5-5"))
+    _override_eval_judge(config, model=None, backend="cursor")
+    assert config.evaluation.model == "claude-sonnet-5-5"
+
+
+def test_override_eval_judge_cursor_with_explicit_model() -> None:
+    from nasde_toolkit.cli import _override_eval_judge
+    from nasde_toolkit.config import EvaluationConfig, ProjectConfig
+
+    config = ProjectConfig(name="test", evaluation=EvaluationConfig())
+    _override_eval_judge(config, model="gpt-5.6-sol-high", backend="cursor")
+    assert config.evaluation.model == "gpt-5.6-sol-high"
+
+
+def test_override_eval_judge_switching_back_to_claude_restores_default_model() -> None:
+    from nasde_toolkit.cli import _override_eval_judge
+    from nasde_toolkit.config import EvaluationConfig, ProjectConfig, default_evaluator_model
+
+    config = ProjectConfig(
+        name="test",
+        evaluation=EvaluationConfig(backend="cursor", model=default_evaluator_model("cursor")),
+    )
+    _override_eval_judge(config, model=None, backend="claude")
+    assert config.evaluation.backend == "claude"
+    assert config.evaluation.model == "claude-opus-5-5"
