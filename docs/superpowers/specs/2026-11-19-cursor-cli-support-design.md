@@ -2,7 +2,9 @@
 
 **Date:** 2026-11-19
 **Status:** Implemented — [#2], [#3], [#4], [#7], [#8] (updated 2026-11-23 to
-match what shipped; see [Changes after the design review](#changes-after-the-design-review))
+match what shipped and to record live verification; see
+[Changes after the design review](#changes-after-the-design-review) and
+[Known gaps](#known-gaps-as-of-2026-11-23))
 
 ## Problem
 
@@ -49,8 +51,11 @@ turned out to carry no cost or tokens, so it was added in [#8] — see §4.)
 Fallback: if the live smoke test shows Harbor's install-time skill registration
 is not discovered by `cursor-agent` (the ADR-012 timing risk), replace the wrapper
 with a nasde-owned agent on `BaseInstalledAgent` that registers skills inside `run()`.
-As of 2026-11-23 that smoke check has not been run (see Testing → live smoke),
-so the fallback decision is still open.
+**Resolved 2026-11-23: no fallback needed.** In a live run of
+`cursor-ntcoding-tactical-ddd`, the agent read
+`/root/.cursor/skills/tactical-ddd/SKILL.md` in its first turn, without
+searching for it, on all four trials. `AGENTS.md` names the skill but gives no
+path, so Cursor lists the install-time-registered skill natively.
 
 ## Design
 
@@ -231,13 +236,15 @@ cursor-agent -p --output-format json --mode ask --trust \
 - **Read-only via `--mode ask`.** Cursor has no `--allowedTools` equivalent; if
   `allowed_tools` is set, print a yellow warning that it is ignored on this
   backend — **once per process**, not once per evaluation (a job runs
-  `trials × eval_repetitions` evaluations).
+  `trials × eval_repetitions` evaluations). This departs from the Claude
+  backend, which enforces the list (gap G2).
 - **Always a temporary `--workspace`.** Unlike the Claude backend (temp dir only
   when skills are configured), Cursor may write `.cursor/` state into its
   workspace; anything written into the trial workspace would leak into
   `changes.patch` and calibration PRs. The temp dir holds `.cursor/skills/`
   (copied from `skills_dir`) and `.cursor/mcp.json` (copied from `mcp_config`;
-  same `mcpServers` shape as Claude's). Removed in `finally`, and also when
+  same `mcpServers` shape as Claude's; the server loads, but its tools can't be
+  called yet — gap G1). Removed in `finally`, and also when
   populating it fails (e.g. a missing `mcp_config` file), so a bad config never
   leaks `nasde_eval_cursor_*` dirs into the temp folder.
 - **Absolute paths in the prompt.** The judge's cwd is that empty temp dir, so a
@@ -277,8 +284,11 @@ The 2026-11-20 example run with `backend = "cursor"` and
 `model = "claude-opus-5-5"` completed and scored every trial. So the premise
 above ("not a valid Cursor slug") is too strong. The default stays
 `claude-opus-5-5-high` because it is the slug `cursor-agent --list-models`
-prints and pins the effort explicitly. Which effort Cursor applies to the bare
-slug was not checked.
+prints and pins the effort explicitly. On 2026-11-23, `--list-models` showed
+only effort-suffixed Claude 5.5 slugs (`claude-opus-5-5-low|medium|high`,
+labelled "Claude Opus 5.5 1M"; `claude-sonnet-5-5-low|medium|high`), yet a bare
+`claude-sonnet-5-5` was also accepted. Which effort Cursor applies to a bare
+slug was not checked (gap G10).
 
 Because `nasde init` writes an explicit `model = "claude-opus-5-5"` into
 `[evaluation]`, the backend-aware default never applies to a scaffolded
@@ -303,13 +313,32 @@ lists `'claude', 'codex', 'cursor'`.
 **Host auth check:** `cursor-agent status` exits 0 whether or not a user is
 logged in, so the check parses its output (`Logged in as ...` vs `Not logged in`).
 
-**Live check (2026-11-20, `examples/ddd-architectural-challenges`, `skills_dir`
-set, no `mcp_config`):** `--mode ask` reads files across the `--add-dir` roots.
-Every trial was scored from the workspace plus `agent_changes.diff` in the trial
-dir, and `git status` in the trial workspace shows no `.cursor` leak. Still
-**unconfirmed**: whether the judge actually loads `.cursor/skills` from the temp
-`--workspace` (the run completed, but nothing shows the evaluator skill was
-used), and `.cursor/mcp.json` + `--approve-mcps` (no MCP config in that project).
+**Live checks:**
+
+- **2026-11-20** (`examples/ddd-architectural-challenges`, `skills_dir` set, no
+  `mcp_config`): `--mode ask` reads files across the `--add-dir` roots. Every
+  trial was scored from the workspace plus `agent_changes.diff` in the trial
+  dir, and `git status` in the trial workspace shows no `.cursor` leak.
+- **2026-11-23, canary probe** through `CursorSubprocessBackend.run_evaluation`:
+  an evaluator skill holding a secret phrase, and a stdio MCP server whose one
+  tool, `canary_token`, returns a secret token.
+  - **Evaluator skills work.** The skill appeared in the judge's native skill
+    list and the judge returned the phrase.
+  - **MCP servers load but their tools can't be called** (gap G1).
+    `cursor-agent` loads the server from the temp workspace's
+    `.cursor/mcp.json`, approves it via `--approve-mcps`, and lists its tool as
+    ready. It then rejects the call with "User rejected MCP:
+    nasde-canary-canary_token". Dropping `--mode ask` changes nothing. The call
+    succeeds with `--force` (unsafe for a judge), or with a project
+    `.cursor/cli.json` of `{"permissions": {"allow": ["Mcp(nasde-canary:*)"]}}`,
+    which keeps `--mode ask`.
+  - **The judge sees the host** (gap G3): about 90 of the user's global skills,
+    every Cursor plugin and its MCP servers, including a ready GitHub MCP that
+    exposes write tools.
+- **2026-11-23, real eval** of the `cursor-ntcoding-tactical-ddd` job with
+  `--eval-backend cursor` (`claude-opus-5-5-high`, 3 repetitions): every trial
+  scored, stamped `cursor/claude-opus-5-5-high`, no `.cursor` leak, no leaked
+  temp workspaces.
 
 ### 4. Opik reporting for Cursor traces ([#8])
 
@@ -402,12 +431,20 @@ What actually ran (2026-11-20): instead of the canary, `cursor-vanilla` on
   `cursor/claude-opus-5-5`; no `.cursor` leak in the workspace.
 - Criterion did not hold, and does not apply: `cache_write_tokens > 0`.
   Cursor reported `usage_totals.cacheWriteTokens = 0` for Composer (only cache
-  reads), so the extraction path is exercised by unit tests only. A
-  Claude-through-Cursor run is the live test for it.
-- **Not yet verified:** native skill registration (the canary). No
-  skill-carrying Cursor variant (`cursor-ntcoding-tactical-ddd`, or a canary)
-  has been run, so the ADR-012 timing risk and the approach-B fallback are still
-  open.
+  reads). A direct `cursor-agent -p --output-format json` call on
+  `claude-sonnet-5-5` (2026-11-23) reported `usage.cacheWriteTokens = 12870` and
+  `cacheReadTokens = 9356`. That is the field the extractor reads, so the
+  cache-write path is correct for Claude models.
+
+What ran on 2026-11-23: `cursor-ntcoding-tactical-ddd` on `composer-2.5`, all
+four tasks (job `2026-11-23__12-50-46__cursor-ntcoding-tactical-ddd__skillcheck`).
+
+- **Native skill registration verified** (see the Decisions fallback note).
+  The ADR-012 timing risk does not apply: Harbor's install-time copy into
+  `~/.cursor/skills` is discovered.
+- Reward 1 on all four. `cost_usd` equals Cursor's `cursor_pricing` figure on
+  every trial ($0.15, $0.12, $0.18, $0.40).
+- The injected `/app/AGENTS.md` shows up in `agent_changes.diff` (gap G6).
 
 Quality gates per `nasde-dev`: `ruff check`, `ruff format --check`, `mypy`, `pytest`.
 
@@ -467,7 +504,30 @@ index.
 | Bare `claude-opus-5-5` on Cursor | Rejected by `cursor-agent` | Accepted in the live run; default kept as `-high` | observed |
 | Opik | Out of scope | Session span with Cursor usage and cost | [#8] |
 | Examples | `cursor-vanilla` | + `cursor-guided`, `cursor-ntcoding-tactical-ddd` | [#7] |
-| Skill canary | Gate for approach B | Not run yet — still open | — |
+| Skill canary | Gate for approach B | Verified live 2026-11-23 with `cursor-ntcoding-tactical-ddd`; approach B not needed | observed |
+| Judge MCP | `.cursor/mcp.json` + `--approve-mcps` is enough | Server loads but every tool call is rejected (G1) | observed |
+
+## Known gaps (as of 2026-11-23)
+
+Measured against the Claude judge and the Claude/Codex agent paths. "Confirmed"
+means reproduced live on 2026-11-23 with `cursor-agent` 2026.11.22-e9042b2;
+"inferred" means read from code or docs and not reproduced.
+
+| # | Gap | Status | Evidence | Direction |
+|---|---|---|---|---|
+| G1 | **Judge MCP tools are unusable.** `[evaluation] mcp_config` loads the server, but `cursor-agent -p` rejects every tool call. `--approve-mcps` approves servers, not tool calls. | Confirmed | Canary probe: "User rejected MCP: nasde-canary-canary_token", with and without `--mode ask` | Write `.cursor/cli.json` into the temp workspace with an `Mcp(<server>:<tool>)` allow rule per permitted tool. Tested: works under `--mode ask`. Never `--force` (it lifts every restriction). |
+| G2 | **`allowed_tools` is ignored.** On Claude it is the judge's whitelist (default Read/Glob/Grep; MCP tools only when listed as `mcp__<server>__<tool>`, per the website's running-benchmarks guide). On Cursor it is dropped with a warning. | Confirmed (code) | `cursor_subprocess._warn_unsupported_options` | Same mechanism as G1: Read/Glob/Grep are what `--mode ask` already allows, `mcp__<server>__<tool>` maps to `Mcp(<server>:<tool>)`, and write/shell entries stay ignored with a warning. One `nasde.toml` then gives both judges the same tool set. |
+| G3 | **The judge isn't isolated from the host.** It loads about 90 of the user's global skills plus every Cursor plugin and its MCP servers, including a ready GitHub MCP that exposes write tools (`merge_pull_request`, `push_files`). Judge context therefore depends on the machine, which hurts reproducibility. | Confirmed | Canary probe listings | Calls to plugin MCP tools should hit the same rejection as G1 unless allowlisted (inferred, not tested). The Claude judge has the same property by design: it skips `--bare` to keep keychain OAuth and auto-discover user skills, and passes `--mcp-config` without `--strict-mcp-config`. Parity with Claude therefore means documenting this, not fixing it; isolating both judges is a separate design. |
+| G4 | **No turn limit.** `max_turns` has no Cursor equivalent. | Confirmed (CLI help) | `cursor-agent --help` | Document. Optionally enforce a wall-clock timeout on the subprocess. |
+| G5 | **Session state accumulates.** Each judge call creates a `~/.cursor/projects/<temp-path>` entry (110 after a few days). Claude uses `--no-session-persistence`; `cursor-agent` has no equivalent flag. | Confirmed | `ls ~/.cursor/projects` | Document; possibly delete the entry for the temp workspace after the call. |
+| G6 | **Injected instruction files leak into the agent's diff.** `/app/AGENTS.md` (`sandbox_files`) is untracked in the trial workspace, so it appears in `agent_changes.diff` (judge input), `changes.patch` (export) and calibration PRs. | Confirmed for Cursor (all 4 trials) | `git status` / `agent_changes.diff` | Not Cursor-specific: the same `sandbox_files` path injects Codex `AGENTS.md`, Claude `CLAUDE.md` and Gemini `GEMINI.md` (inferred; no local job to confirm). Exclude injected sandbox paths from `capture_patch`. |
+| G7 | **`append_system_prompt` is not a system prompt.** It is prepended to the user prompt; Claude uses `--append-system-prompt`. | Confirmed (code) | `_compose_prompt` | Document; no Cursor flag exists. |
+| G8 | **`cursor-agent` ignored the host's `~/.cursor/mcp.json`** ("No MCP servers configured", even from `$HOME`), while the IDE uses it. | Confirmed on one machine | `cursor-agent mcp list` | Host-specific, probably a file the CLI can't parse. No nasde change; worth a troubleshooting note. |
+| G9 | **Long-context pricing.** Cursor offers Opus 5.5 as a 1M-context model; any long-context premium is not modelled. | Inferred (model list label) | `cursor-agent --list-models` | Already out of scope; check Cursor's pricing page when the catalog is next refreshed. |
+| G10 | **Effort of bare slugs is unknown.** `claude-opus-5-5` and `claude-sonnet-5-5` are accepted though not listed. Which effort they run at is unknown, and the `reasoning_effort` stamp stays `""`. | Confirmed (accepted) / unknown (effort) | 2026-11-20 eval, 2026-11-23 direct call | Prefer listed slugs in docs and examples (`-high`, …). |
+| G11 | **Opik change has no CHANGELOG entry.** [#8] added only the `[#8]` link-ref, and put a stray indent inside the backticks of the #88 Opik entry. | Confirmed | `CHANGELOG.md` | Add an `[Unreleased]` → `Fixed` entry; fix the indent. |
+| G12 | **Harbor drops `env` for stdio MCP servers** in the sandbox's `~/.cursor/mcp.json`. | Inferred (Harbor code, unchanged) | Known limitation above | Unchanged; `[nasde.plugin]` servers are env-wrapped. |
+| G13 | **Not exercised live:** agent-side task MCP servers (should work: Harbor runs the agent with `--yolo`, and `ConfigurableCursor` adds `--approve-mcps`), the judge with `include_trajectory = true`, and an Opik trace for a Cursor trial. | Open | — | Cover in the next Cursor run that touches these paths. |
 
 [#2]: https://github.com/krzykrucz/nasde-toolkit/pull/2
 [#3]: https://github.com/krzykrucz/nasde-toolkit/pull/3

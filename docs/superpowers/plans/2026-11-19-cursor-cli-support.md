@@ -13,8 +13,10 @@
 ## Execution status (updated 2026-11-23)
 
 Executed. Tasks 1–9 and 11–13 shipped. Tasks 10 and 14 (live smoke) ran in a
-different form than written and are recorded in place. One item is still open:
-the **native-skill canary** (Task 10 Step 3, third bullet). Review rounds changed
+different form than written and are recorded in place. The native-skill check
+(Task 10) passed on 2026-11-23, so the approach-B fallback is not needed. Gaps
+found while verifying are listed in the spec's "Known gaps" section (G1–G13) and
+turned into unscheduled follow-ups at the end of this plan. Review rounds changed
 code after the plan was written. The snippets below are updated to the merged
 code, and each deviation is marked **As built:** in its task. Added work:
 Task 12a (judge prompt paths and model stamp), Task 15 (Opik session span), and
@@ -1766,7 +1768,16 @@ If the skill check fails while everything else passes, stop and report: per the 
 
 - `reward.txt` = 1 on all four; `model_name = "cursor/composer-2.5"`; `cost_usd` non-null and equal to `agent_reported_cost_usd` (`cost_source = "cursor_pricing"`), e.g. $0.1226 on `ddd-threshold-discount`.
 - `cache_write_tokens` = 0 on every trial. Cursor reported `usage_totals.cacheWriteTokens = 0` for Composer, so `> 0` is not a valid criterion for a Composer run. Re-check it on a Claude-through-Cursor slug.
-- **Open:** the skill check (trajectory references the skill + marker file) has not been run. Run it with the canary above or with `cursor-ntcoding-tactical-ddd`; the approach-B decision still depends on it.
+- The skill check was not run in this pass; it was run on 2026-11-23, below.
+
+**As run (2026-11-23):** `uv run nasde run --variant cursor-ntcoding-tactical-ddd --without-eval --job-suffix skillcheck -C examples/ddd-architectural-challenges` ran all four tasks on `composer-2.5`. The variant ships `agents_skills/tactical-ddd/`; its `AGENTS.md` names the skill but not its path.
+
+- **Skill check passed.** In its first agent step (`step_id` 2) on every trial, the agent calls `readToolCall /root/.cursor/skills/tactical-ddd/SKILL.md`, with no search before it. The skill is registered natively; approach B is not needed.
+- Reward 1 on all four; `cost_usd` matches `agent_reported_cost_usd` (`cursor_pricing`).
+- `cache_write_tokens` on a Claude model: a direct `cursor-agent -p --output-format json --model claude-sonnet-5-5` call returned `usage.cacheWriteTokens = 12870`, the field the extractor reads.
+- Found: the injected `/app/AGENTS.md` appears in `agent_changes.diff` on every trial (spec gap G6).
+
+The canary steps below were replaced by this run, so they stay unticked.
 
 - [ ] **Step 4: Clean up**
 
@@ -2518,7 +2529,24 @@ Pass criteria:
 
 If the judge fails with a permissions error reading files under the `--add-dir` roots in `--mode ask`, stop and report: the fallback is to drop `--mode ask` and rely on the prompt alone, which is a security trade-off the owner must approve.
 
-**As run (2026-11-20):** the Cursor judge scored the Task 10 job. The project had `backend = "cursor"`, an explicit `model = "claude-opus-5-5"` (not `-high`), `skills_dir = "./evaluator_skills"`, 3 repetitions. All four trials scored with numeric `normalized_score`, stamped `cursor/claude-opus-5-5`, and there was no `.cursor` leak. No `--add-dir` permission problem, so the `--mode ask` fallback is not needed. Side finding: `cursor-agent` accepts the bare `claude-opus-5-5` slug, contrary to the spec's premise; the `-high` default is kept. Not verified: whether the judge loaded the `evaluator_skills` from the temp workspace, and the `mcp_config` / `--approve-mcps` path.
+**As run (2026-11-20):** the Cursor judge scored the Task 10 job. The project had `backend = "cursor"`, an explicit `model = "claude-opus-5-5"` (not `-high`), `skills_dir = "./evaluator_skills"`, 3 repetitions. All four trials scored with numeric `normalized_score`, stamped `cursor/claude-opus-5-5`, and there was no `.cursor` leak. No `--add-dir` permission problem, so the `--mode ask` fallback is not needed. Side finding: `cursor-agent` accepts the bare `claude-opus-5-5` slug, contrary to the spec's premise; the `-high` default is kept.
+
+**As run (2026-11-23):**
+
+- `uv run nasde eval <skillcheck job> --eval-backend cursor -C examples/ddd-architectural-challenges` remapped the default judge to `claude-opus-5-5-high`. All four trials scored (3 repetitions each, std ≤ 0.021), stamped `cursor/claude-opus-5-5-high`. No `.cursor` leak and no leftover `nasde_eval_cursor_*` temp dirs.
+- **Canary probe.** A small script called `CursorSubprocessBackend().run_evaluation` with `skills_dir` set to a canary skill and `mcp_config` set to a stdio server (`FastMCP`, pinned `mcp<2`, since `mcp` 2.x removed `FastMCP`) exposing `canary_token`.
+  - **Evaluator skills: pass.** The skill is in the native list and its phrase came back.
+  - **MCP: server loads, tool call rejected** ("User rejected MCP: nasde-canary-canary_token"). Repeating with plain `cursor-agent` isolated the cause:
+
+    | Flags | Result |
+    |---|---|
+    | `--mode ask --approve-mcps` (nasde today) | rejected |
+    | `--approve-mcps` without `--mode ask` | rejected |
+    | `--mode ask --approve-mcps --force` | works (unsafe for a judge) |
+    | `--mode ask --approve-mcps` plus `.cursor/cli.json` `{"permissions": {"allow": ["Mcp(nasde-canary:*)"]}}` | works |
+
+    Spec gaps G1 and G2.
+  - **Host leakage.** The probe also listed about 90 user skills and every Cursor plugin MCP, including a ready GitHub MCP with write tools (spec gap G3).
 
 ---
 
@@ -2546,3 +2574,18 @@ Inside `_patch_opik_deferred_metrics`, additionally patch `harbor.models.traject
 - [x] **Step 3: Docs**
 
 The `_patch_opik_deferred_metrics` docstring describes the Cursor case. Only the `[#8]` link-ref was added to `CHANGELOG.md`; there is no `[Unreleased]` entry for this change yet.
+
+---
+
+## Follow-ups (unscheduled)
+
+Each maps to a gap in the spec's "Known gaps" table. None is designed or scheduled; each needs its own go-ahead.
+
+| Follow-up | Gaps | Scope sketch |
+|---|---|---|
+| Honor `allowed_tools` on the Cursor judge | G1, G2 | Have `_populate_cursor_dir` write `.cursor/cli.json` with `Mcp(<server>:<tool>)` for each `mcp__<server>__<tool>` entry (`mcp__<server>` or `__*` maps to `:*`). Pass `--approve-mcps` when any MCP entry exists. Warn once for entries that need write or shell access. Read/Glob/Grep need nothing (`--mode ask`). Live acceptance: the canary probe returns `MCP-CANARY-7f3a91`. |
+| Keep injected instruction files out of the diff | G6 | Exclude the variant's `sandbox_files` targets (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, injected skills under `/app`) from `capture_patch`. This affects all agents: confirm on a Codex and a Claude job first. |
+| Document Cursor judge limits | G3, G4, G5, G7, G10 | Add to the CLAUDE.md evaluator bullet, ARCHITECTURE.md, the website `running-benchmarks` guide and the runner skill: host skills and plugins leak in (as on Claude), no turn limit, a `~/.cursor/projects` entry per call, the preamble is not a system prompt, prefer listed effort slugs. |
+| CHANGELOG fix for #8 | G11 | Add an `[Unreleased]` → `Fixed` entry for the Opik Cursor session span; remove the stray indent in the #88 entry. |
+| Judge isolation (both backends) | G3 | A separate design: e.g. a dedicated HOME/config dir per judge run versus keeping subscription OAuth, and `--strict-mcp-config` on Claude. |
+| Remaining live checks | G13 | Task-declared MCP server on a Cursor agent, `include_trajectory = true` with the Cursor judge, and a `--with-opik` Cursor trial verified via the Opik REST API. |
