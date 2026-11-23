@@ -10,6 +10,31 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-19-cursor-cli-support-design.md`
 
+## Execution status (updated 2026-11-23)
+
+Executed. Tasks 1–9 and 11–13 shipped. Tasks 10 and 14 (live smoke) ran in a
+different form than written and are recorded in place. One item is still open:
+the **native-skill canary** (Task 10 Step 3, third bullet). Review rounds changed
+code after the plan was written. The snippets below are updated to the merged
+code, and each deviation is marked **As built:** in its task. Added work:
+Task 12a (judge prompt paths and model stamp), Task 15 (Opik session span), and
+the extra example variants in Task 8.
+
+| Task | Shipped in |
+|---|---|
+| 1–5 Economics | [#2] |
+| 6–9 Cursor agent | [#3] |
+| 8 (extra variants) | [#7] |
+| 11–13, 12a Cursor judge | [#4] |
+| Run header label | `9d3254d` |
+| 15 Opik session span | [#8] |
+
+[#2]: https://github.com/krzykrucz/nasde-toolkit/pull/2
+[#3]: https://github.com/krzykrucz/nasde-toolkit/pull/3
+[#4]: https://github.com/krzykrucz/nasde-toolkit/pull/4
+[#7]: https://github.com/krzykrucz/nasde-toolkit/pull/7
+[#8]: https://github.com/krzykrucz/nasde-toolkit/pull/8
+
 ## Global Constraints
 
 - Code style (CLAUDE.md): type hints on all public functions; `@dataclass` for internal models; Rich console for all output, no bare `print()`.
@@ -39,6 +64,13 @@ Three PRs, as in the spec's rollout section:
 The spec and this plan live on `feat/cursor-cli-support`; cherry-pick its commits onto `feat/cursor-pricing` so the design ships with PR 1.
 
 Pushing needs write access to `origin` (`krzykrucz/nasde-toolkit`). The current account gets a 403; either get collaborator access or push to a fork and open the PRs from it.
+
+**As built:** PR 1 is [#2] and PR 3 is [#4], both into `main`. PR 2 is [#3]: it was
+branched from PR 1 and squash-merged into `main` after #2. Two follow-ups
+landed separately, [#7] (Task 8 extra variants) and [#8] (Task 15). The
+spec/plan commit was reverted from `main` in #6 and came back with #2. The
+changelog link-refs point at `krzykrucz/nasde-toolkit`, not
+`NoesisVision/nasde-toolkit`.
 
 ```bash
 git switch main && git pull --ff-only
@@ -82,7 +114,7 @@ git cherry-pick main..feat/cursor-cli-support
 **Interfaces:**
 - Produces: `normalize_model_slug(model: str) -> str` and `resolve_catalog_key(model: str, catalog: Mapping[str, object]) -> str | None` in `nasde_toolkit.pricing`. `compute_cost_usd` and `pricing_as_of` keep their signatures but now resolve through `resolve_catalog_key`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add `ModelPrice`, `normalize_model_slug` and `resolve_catalog_key` to the existing `from nasde_toolkit.pricing import (...)` block in `tests/test_pricing.py`, then append:
 
@@ -102,11 +134,20 @@ Add `ModelPrice`, `normalize_model_slug` and `resolve_catalog_key` to the existi
         ("cursor/claude-opus-5-5-high", "cursor/claude-opus-5-5"),
         ("composer-2.5", "composer-2.5"),
         ("claude-opus-5-5-fast", "claude-opus-5-5-fast"),
+        ("claude-opus-4-8[fast=true]", "claude-opus-4-8[fast=true]"),
+        ("claude-opus-4-8[effort=high,fast=true]", "claude-opus-4-8[effort=high,fast=true]"),
+        ("claude-opus-4-8[fast=false]", "claude-opus-4-8"),
         ("gpt-5.4-mini", "gpt-5.4-mini"),
     ],
 )
 def test_normalize_model_slug(slug: str, expected: str) -> None:
     assert normalize_model_slug(slug) == expected
+
+
+def test_resolve_catalog_key_fast_true_is_unpriced() -> None:
+    catalog = {"claude-opus-4-8": 3}
+    assert resolve_catalog_key("cursor/claude-opus-4-8[fast=true]", catalog) is None
+    assert resolve_catalog_key("cursor/claude-opus-4-8[effort=high,fast=true]", catalog) is None
 
 
 def test_resolve_catalog_key_prefers_exact_match() -> None:
@@ -153,12 +194,12 @@ def test_pricing_as_of_uses_normalized_key() -> None:
     assert pricing_as_of("cursor/m-high", pricing) == "2026-11-19"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_pricing.py -v`
 Expected: collection fails with `ImportError: cannot import name 'normalize_model_slug'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/nasde_toolkit/pricing.py`, extend the imports:
 
@@ -172,9 +213,11 @@ from dataclasses import dataclass
 Below `console = Console()`, add:
 
 ```python
-_BRACKET_PARAMS_RE = re.compile(r"\[[^\[\]]*\]$")
+_BRACKET_PARAMS_RE = re.compile(r"\[([^\[\]]*)\]$")
 _EFFORT_SUFFIX_RE = re.compile(r"(?:-thinking)?-(?:none|minimal|low|medium|high|xhigh|max)$|-thinking$")
 ```
+
+**As built:** the bracket regex captures the group's contents so `normalize_model_slug` can detect `fast=true` (review finding: stripping `[fast=true]` would price a fast-mode run at the standard rate).
 
 Replace the lookup at the top of `compute_cost_usd`'s body:
 
@@ -193,14 +236,22 @@ Insert `normalize_model_slug` between `load_pricing_layered` and `pricing_as_of`
 
 ```python
 def normalize_model_slug(model: str) -> str:
-    """Strip bracket params and one trailing effort/thinking suffix from a model slug.
+    """Strip the trailing bracket params and one trailing effort/thinking suffix from a model slug.
 
     Cursor encodes effort in its slugs (``claude-opus-5-5-high``,
     ``claude-fable-5-thinking-xhigh``) and accepts bracket overrides
     (``composer-2.5[effort=high]``); neither changes the per-token price.
     ``-fast`` is deliberately not stripped: fast modes bill at a higher rate.
+    Likewise a bracket group containing ``fast=true`` is a fast mode, so such a
+    slug is returned untouched and resolves as unpriced instead of silently
+    taking the standard rate.
     """
-    without_params = _BRACKET_PARAMS_RE.sub("", model)
+    bracket_match = _BRACKET_PARAMS_RE.search(model)
+    if bracket_match is None:
+        return _EFFORT_SUFFIX_RE.sub("", model)
+    if _enables_fast_mode(bracket_match.group(1)):
+        return model
+    without_params = model[: bracket_match.start()]
     return _EFFORT_SUFFIX_RE.sub("", without_params)
 ```
 
@@ -230,21 +281,26 @@ def resolve_catalog_key(model: str, catalog: Mapping[str, object]) -> str | None
     return None
 ```
 
-Insert the first private helper directly after `resolve_pricing_layers` (before `_load_bundled_pricing`):
+Insert the private helpers directly after `resolve_pricing_layers` (before `_load_bundled_pricing`):
 
 ```python
+def _enables_fast_mode(bracket_params: str) -> bool:
+    options = (option.strip().lower() for option in bracket_params.split(","))
+    return "fast=true" in options
+
+
 def _catalog_key_candidates(model: str) -> list[str]:
     unprefixed = model.split("/", 1)[-1]
     candidates = [model, normalize_model_slug(model), unprefixed, normalize_model_slug(unprefixed)]
     return list(dict.fromkeys(candidates))
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_pricing.py tests/test_token_metrics.py tests/test_results_exporter.py -v`
 Expected: all PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/nasde_toolkit/pricing.py tests/test_pricing.py
@@ -260,13 +316,23 @@ git commit -m "pricing: resolve prices through effort suffixes and provider pref
 **Interfaces:**
 - Consumes: `resolve_catalog_key`, `compute_cost_usd` from Task 1.
 - Produces: catalog keys `cursor/composer-2.5`, `cursor/claude-opus-5-5`, `cursor/claude-sonnet-5-5`, `cursor/claude-fable-5`, `cursor/claude-fable-5-1`.
+- **As built:** also `cursor/claude-opus-5`, `cursor/claude-opus-4-8`, `-4-7`, `-4-6`, `-4-5`, `cursor/claude-sonnet-5`, `cursor/claude-sonnet-4-6`, `-4-5`, `cursor/claude-haiku-4-5`. Every Claude entry with a cache-write rate gets a `cursor/` twin; otherwise a Cursor trial on an older Claude model falls through to the vendor's 2x cache-write rate. The test set is derived from the catalog rather than hardcoded, so a new Claude entry without a twin fails.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_pricing.py`:
 
 ```python
-CURSOR_CLAUDE_BASES = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-fable-5-1")
+CURSOR_CLAUDE_BASES = sorted(
+    name
+    for name, price in load_pricing().items()
+    if name.startswith("claude-") and price.cache_write_per_1m is not None
+)
+
+
+def test_cursor_claude_bases_cover_the_whole_claude_catalog() -> None:
+    assert {"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-fable-5-1"} <= set(CURSOR_CLAUDE_BASES)
+    assert "claude-haiku-4-5" in CURSOR_CLAUDE_BASES
 
 
 @pytest.mark.parametrize("base", CURSOR_CLAUDE_BASES)
@@ -304,12 +370,12 @@ def test_cursor_composer_is_priced() -> None:
     assert price.source == "https://cursor.com/docs/models-and-pricing"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_pricing.py -k cursor -v`
 Expected: FAIL with `KeyError: 'cursor/claude-opus-5-5'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/nasde_toolkit/pricing.toml`, replace the comment block that starts `# Lookup is an exact model-name match.` (four lines, ending `# pricing.toml. From 4.6 on, the dateless ID is the pinned snapshot.`) with:
 
@@ -330,14 +396,16 @@ Append at the end of the file:
 # Cursor (agent = "cursor") — harness-scoped keys (ADR-015).
 # Cursor trials record model_name as "cursor/<slug>"; the lookup tries the
 # cursor/ key before the vendor key, so these entries apply to Cursor runs only.
-# Listed only where Cursor's rate differs from the vendor entry above: Cursor
-# bills Claude cache writes at the 5-minute rate (1.25x input), not the 1-hour
-# rate (2x) Claude Code uses. Cursor's OpenAI rates match the vendor entries, so
-# GPT models fall through. "auto" has no per-token rate (Cursor bills it as
-# whichever model serves the request) and is deliberately unpriced. Composer
-# lists no cache-write charge, so the field is omitted (writes fall back to the
-# input rate). Team/Enterprise plans add a $0.25/1M "Cursor Token Rate" on
-# third-party models; it is not modelled (individual plans do not pay it).
+# Every Claude model above that carries a cache-write rate has a cursor/ twin
+# here: same input/output/cached rates, but Cursor bills Claude cache writes at
+# the 5-minute rate (1.25x input), not the 1-hour rate (2x) Claude Code uses.
+# Composer is Cursor-native and has its own entry. Cursor's OpenAI rates match
+# the vendor entries, so GPT models fall through to them. "auto" has no
+# per-token rate (Cursor bills it as whichever model serves the request) and is
+# deliberately unpriced. Composer lists no cache-write charge, so the field is
+# omitted (writes fall back to the input rate). Team/Enterprise plans add a
+# $0.25/1M "Cursor Token Rate" on third-party models; it is not modelled
+# (individual plans do not pay it).
 
 [models."cursor/composer-2.5"]
 input_per_1m = 0.5
@@ -379,12 +447,14 @@ as_of = "2026-11-19"
 source = "https://cursor.com/docs/models-and-pricing"
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+**As built:** followed by the same shape for `cursor/claude-opus-5` and `cursor/claude-opus-4-8`/`-4-7`/`-4-6`/`-4-5` (5.0 / 25.0 / 0.5 / 6.25), `cursor/claude-sonnet-5` (2.0 / 10.0 / 0.2 / 2.5), `cursor/claude-sonnet-4-6`/`-4-5` (3.0 / 15.0 / 0.3 / 3.75) and `cursor/claude-haiku-4-5` (1.0 / 5.0 / 0.1 / 1.25). The rates are input / output / cached input / cache write per 1M, `as_of` and `source` as above.
+
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_pricing.py tests/test_pricing_report.py -v`
 Expected: all PASS. If an existing test iterates over every bundled entry asserting a Claude-specific invariant (e.g. cache writes = 2x input), restrict it to keys without a `/` and note why in its docstring.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/nasde_toolkit/pricing.toml tests/test_pricing.py
@@ -401,7 +471,7 @@ git commit -m "pricing: add cursor/ entries for Composer 2.5 and Claude-through-
 - Consumes: `resolve_catalog_key` (Task 1), `cursor/` entries (Task 2).
 - Produces: `priced_as_label(model: str, catalog_key: str) -> str` in `nasde_toolkit.pricing_report`; `pricing_used.json` entries gain `"catalog_key"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_pricing_report.py` (add `from nasde_toolkit.pricing_report import priced_as_label` to its imports):
 
@@ -458,12 +528,12 @@ def test_export_pricing_used_exact_match_catalog_key(job_dir: Path, tmp_path: Pa
     assert report["claude-sonnet-5-5"]["catalog_key"] == "claude-sonnet-5-5"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_pricing_report.py tests/test_runner_economics.py tests/test_results_exporter.py -v`
 Expected: FAIL (`ImportError: cannot import name 'priced_as_label'`; the exporter tests fail with `KeyError`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/nasde_toolkit/pricing_report.py`, add above `render_pricing_table`:
 
@@ -524,12 +594,12 @@ def _write_pricing_used(dest: Path, trial_dirs: list[Path], project_dir: Path | 
         (dest / "pricing_used.json").write_text(json.dumps(report, indent=2))
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_pricing_report.py tests/test_runner_economics.py tests/test_results_exporter.py -v`
 Expected: all PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/nasde_toolkit/pricing_report.py src/nasde_toolkit/runner.py src/nasde_toolkit/results_exporter.py tests/test_pricing_report.py tests/test_runner_economics.py tests/test_results_exporter.py
@@ -546,7 +616,7 @@ git commit -m "pricing: show which catalog entry priced each model"
 - Consumes: `cursor/composer-2.5` entry (Task 2).
 - Produces: `build_trial_economics(...)` dict gains `"agent_reported_cost_usd": float | None` and `"agent_reported_cost_source": str | None`. `AssessmentSummary` gains `agent_reported_cost_usd: float | None = None` and `agent_reported_cost_source: str | None = None`. `metrics.json` gains the same two keys.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_token_metrics.py`:
 
@@ -664,12 +734,12 @@ def test_export_metrics_include_agent_reported_cost(job_dir: Path, tmp_path: Pat
     assert metrics["agent_reported_cost_source"] == "litellm"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_token_metrics.py tests/test_evaluator.py tests/test_results_exporter.py -v`
 Expected: FAIL (`cache_write_tokens == 0`, `KeyError: 'agent_reported_cost_usd'`, `AttributeError` on the summary).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/nasde_toolkit/token_metrics.py`, change the module docstring's cache-write line to:
 
@@ -764,12 +834,12 @@ In `src/nasde_toolkit/results_exporter.py` `_build_metrics`, add after the `"pri
         "agent_reported_cost_source": economics["agent_reported_cost_source"],
 ```
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `uv run pytest`
 Expected: all PASS. If a test asserts the exact key set of `metrics.json` or `assessment_summary.json`, add the two new keys to its expectation.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/nasde_toolkit/token_metrics.py src/nasde_toolkit/evaluator.py src/nasde_toolkit/results_exporter.py tests/test_token_metrics.py tests/test_evaluator.py tests/test_results_exporter.py
@@ -782,7 +852,7 @@ git commit -m "economics: count Cursor cache writes and record the agent-reporte
 - Create: `docs/adr/015-cursor-cli-agent-and-judge.md`
 - Modify: `CHANGELOG.md`, `CLAUDE.md`
 
-- [ ] **Step 1: Write the ADR**
+- [x] **Step 1: Write the ADR**
 
 Create `docs/adr/015-cursor-cli-agent-and-judge.md`:
 
@@ -852,7 +922,7 @@ matter to nasde:
   `[nasde.plugin]` servers are unaffected (env-wrapped), hand-declared ones are.
 ```
 
-- [ ] **Step 2: CHANGELOG**
+- [x] **Step 2: CHANGELOG**
 
 In `CHANGELOG.md` under `## [Unreleased]`, add an `### Added` section above the existing `### Changed` (or extend it if one exists by then):
 
@@ -865,6 +935,8 @@ In `CHANGELOG.md` under `## [Unreleased]`, add an `### Added` section above the 
   own cost figure as `agent_reported_cost_usd` / `agent_reported_cost_source`
   for audit; `cost_usd` is unchanged as the source of truth. ([#NN])
 ```
+
+**As built:** the entry says "Composer 2.5, and every Claude model in the catalog that has a cache-write rate" instead of naming four models, and adds that GPT models fall through to the vendor entries. ADR-015's lookup bullet says the same. The `### Changed` entry below gains: "A `[fast=true]` bracket option is never stripped, so fast-mode slugs stay unpriced instead of taking the standard rate."
 
 Under `### Changed` add:
 
@@ -884,7 +956,7 @@ Under `### Fixed` add:
   are now counted in `token_usage.cache_write_tokens` and priced. ([#NN])
 ```
 
-- [ ] **Step 3: CLAUDE.md**
+- [x] **Step 3: CLAUDE.md**
 
 In `CLAUDE.md`, in the **Token & cost metrics** architecture bullet, replace the sentence fragment `Pricing is loaded via` with:
 
@@ -894,7 +966,7 @@ Price keys are resolved by `pricing.resolve_catalog_key` (ADR-015): exact name, 
 
 and in the package-structure listing change the `pricing.py / pricing.toml` comment to end with `; layered key lookup via resolve_catalog_key (ADR-015)`.
 
-- [ ] **Step 4: Quality gates**
+- [x] **Step 4: Quality gates**
 
 Run each; all must pass:
 
@@ -907,7 +979,7 @@ uv run pytest
 
 If `ruff format --check` fails, run `uv run ruff format src/ tests/` and re-run the check.
 
-- [ ] **Step 5: Commit, push, open PR, fix the link-ref**
+- [x] **Step 5: Commit, push, open PR, fix the link-ref**
 
 ```bash
 git add docs/adr/015-cursor-cli-agent-and-judge.md CHANGELOG.md CLAUDE.md
@@ -937,7 +1009,7 @@ git switch -c feat/cursor-agent
 **Interfaces:**
 - Produces: `nasde_toolkit.agents.configurable_cursor:ConfigurableCursor` (import path used by the runner in Task 7), `ConfigurableCursorOptions`, `ConfigurableCursor.name() == "configurable-cursor-cli"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_configurable_cursor.py`:
 
@@ -1041,12 +1113,12 @@ AGENT_CASES = [
 ]
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_configurable_cursor.py tests/test_configurable_agents_options.py -v`
 Expected: collection fails with `ModuleNotFoundError: No module named 'nasde_toolkit.agents.configurable_cursor'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/nasde_toolkit/agents/configurable_cursor.py`:
 
@@ -1088,7 +1160,7 @@ Usage in harbor_config.json::
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 from harbor.agents.installed.cursor_cli import CursorCli, CursorCliOptions
 from harbor.environments.base import BaseEnvironment
@@ -1131,12 +1203,14 @@ class ConfigurableCursor(CursorCli):
         self._sandbox_files = sandbox_files or {}
 
     @staticmethod
+    @override
     def name() -> str:
         return "configurable-cursor-cli"
 
+    @override
     def build_cli_flags(self) -> str:
         """Harbor's flags, plus ``--approve-mcps`` when the task declares MCP servers."""
-        harbor_flags = super().build_cli_flags()
+        harbor_flags: str = super().build_cli_flags()
         if not self.mcp_servers:
             return harbor_flags
         return f"{harbor_flags} --approve-mcps".strip()
@@ -1161,12 +1235,14 @@ class ConfigurableCursor(CursorCli):
             )
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_configurable_cursor.py tests/test_configurable_agents_options.py -v && uv run mypy src/nasde_toolkit/agents/configurable_cursor.py`
 Expected: all PASS; mypy `Success`. If mypy flags the `name()` override against Harbor's `@override`-decorated staticmethod, add `from typing import override` and decorate `name` with `@staticmethod` then `@override` in that order, matching Harbor.
 
-- [ ] **Step 5: Commit**
+**As built:** mypy did need it. The snippet above includes `@override` on `name` and `build_cli_flags`. The flag tests also assert the exact strings (`""`, `"--approve-mcps"`, `"--mode ask --approve-mcps"`), and the missing-source test checks that nothing was uploaded.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/nasde_toolkit/agents/configurable_cursor.py tests/test_configurable_cursor.py tests/test_configurable_agents_options.py
@@ -1183,7 +1259,7 @@ git commit -m "agents: add ConfigurableCursor (sandbox_files + MCP auto-approve)
 - Consumes: `ConfigurableCursor` import path from Task 6.
 - Produces: `_is_cursor_agent(agent_import_path: str | None) -> bool`; `_qualify_model_name(import_path: str | None, model_name: str) -> str`; `"cursor"` accepted in `variant.toml`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/test_runner.py`, add `_is_cursor_agent` to the `nasde_toolkit.runner` import block, then append:
 
@@ -1334,12 +1410,12 @@ In `tests/test_runner_economics.py`, extend `test_short_label_strips_family_and_
     assert _short_label("cursor-vanilla", "cursor/claude-opus-5-5-high") == "vanilla / opus-5-5-high"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_runner.py tests/test_runner_skills.py tests/test_runner_economics.py -v`
 Expected: collection fails with `ImportError: cannot import name '_is_cursor_agent'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 All edits in `src/nasde_toolkit/runner.py`.
 
@@ -1352,6 +1428,8 @@ All edits in `src/nasde_toolkit/runner.py`.
         console.print("[red]ERROR: Set CURSOR_API_KEY (create a User API key in the Cursor dashboard)[/red]")
         raise SystemExit(1)
 ```
+
+**As built (single classifier):** `_ensure_auth` classifies once with `agent_type = _agent_type_from_import_path(agent_import_path)` and branches on `agent_type == "codex" / "gemini" / "cursor"`, replacing the `_is_*_agent` calls. `_qualify_model_name` and `_refresh_agent_skills` use the same classifier. Review finding: an import path matching two families (`gemini_cursor_bridge.agent:BridgeAgent`) was checked for Gemini auth but qualified as Cursor.
 
 `_AGENT_SKILLS_SUBDIR`:
 
@@ -1408,16 +1486,40 @@ Add directly after `_build_merged_config`:
 
 ```python
 def _qualify_model_name(import_path: str | None, model_name: str) -> str:
-    """Prefix a bare Cursor slug with ``cursor/``.
+    """Qualify a Cursor model name as ``cursor/<slug>``.
 
     ``cursor/<slug>`` is the ``provider/model`` form Harbor's CursorCli requires,
     and it is what keys the harness-scoped ``cursor/`` price entries (ADR-015).
+    A bare slug is prefixed and any other provider prefix (``anthropic/<slug>``)
+    is replaced, so Cursor trials always reach the ``cursor/`` price entries.
     Other agents' model names pass through unchanged.
     """
-    if _is_cursor_agent(import_path) and "/" not in model_name:
-        return f"cursor/{model_name}"
-    return model_name
+    if _agent_type_from_import_path(import_path) != "cursor":
+        return model_name
+    return f"cursor/{model_name.split('/', 1)[-1]}"
 ```
+
+**As built:** the original plan passed any `provider/model` name through. A Cursor variant written as `anthropic/claude-opus-5-5-high` would then skip the `cursor/` price entries, so the prefix is now replaced. Tests added to `tests/test_runner.py`:
+
+```python
+def test_agent_type_from_import_path_classifies_cursor() -> None:
+    assert _agent_type_from_import_path(CURSOR_PATH) == "cursor"
+
+
+@pytest.mark.parametrize(
+    ("model_name", "expected"),
+    [
+        ("composer-2.5", "cursor/composer-2.5"),
+        ("cursor/composer-2.5", "cursor/composer-2.5"),
+        ("anthropic/claude-opus-5-5-high", "cursor/claude-opus-5-5-high"),
+        ("openai/gpt-5.6-sol-high", "cursor/gpt-5.6-sol-high"),
+    ],
+)
+def test_qualify_model_name_forces_cursor_prefix_for_cursor_agents(model_name: str, expected: str) -> None:
+    assert _qualify_model_name(CURSOR_PATH, model_name) == expected
+```
+
+plus `test_qualify_model_name_leaves_other_agents_untouched` (Claude/Codex/Gemini/`None` import paths) and `test_ambiguous_import_path_is_classified_once_for_auth_skills_and_model`.
 
 `_short_label`:
 
@@ -1431,12 +1533,12 @@ def _short_label(agent: str, model: str) -> str:
     return f"{short_agent} / {short_model}" if short_model else short_agent
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_runner.py tests/test_runner_skills.py tests/test_runner_economics.py -v`
 Expected: all PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/nasde_toolkit/runner.py tests/test_runner.py tests/test_runner_skills.py tests/test_runner_economics.py
@@ -1449,7 +1551,7 @@ git commit -m "runner: support agent = \"cursor\" variants"
 - Create: `examples/ddd-architectural-challenges/variants/cursor-vanilla/variant.toml`
 - Create: `examples/ddd-architectural-challenges/variants/cursor-vanilla/AGENTS.md`
 
-- [ ] **Step 1: Create the variant**
+- [x] **Step 1: Create the variant**
 
 ```bash
 mkdir -p examples/ddd-architectural-challenges/variants/cursor-vanilla
@@ -1463,24 +1565,26 @@ agent = "cursor"
 model = "composer-2.5"
 ```
 
-- [ ] **Step 2: Check the variant is discovered**
+- [x] **Step 2: Check the variant is discovered**
 
 Run: `uv run python -c "from pathlib import Path; from nasde_toolkit.runner import load_variant_agent_type; print(load_variant_agent_type(Path('examples/ddd-architectural-challenges/variants/cursor-vanilla')))"`
 Expected: `cursor`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add examples/ddd-architectural-challenges/variants/cursor-vanilla
 git commit -m "examples: add cursor-vanilla variant"
 ```
 
+**As built:** `cursor-vanilla/AGENTS.md` is the one-line `You are a coding assistant. Work in /app.` (the `codex-vanilla` copy). A follow-up PR, [#7], added `cursor-guided` (`AGENTS.md` mirroring `codex-guided`) and `cursor-ntcoding-tactical-ddd` (`AGENTS.md` plus `agents_skills/tactical-ddd/SKILL.md`, the ntcoding snapshot). Both are on `composer-2.5`, with an `### Added` CHANGELOG entry. `cursor-ntcoding-tactical-ddd` is the natural candidate for the still-open Task 10 skill check.
+
 ### Task 9: PR 2 docs
 
 **Files:**
 - Modify: `CHANGELOG.md`, `README.md`, `CLAUDE.md`, `ARCHITECTURE.md`, `.claude/skills/nasde-benchmark-creator/SKILL.md`, `.claude/skills/nasde-benchmark-runner/SKILL.md`, `.claude/skills/nasde-dev/SKILL.md`
 
-- [ ] **Step 1: CHANGELOG**
+- [x] **Step 1: CHANGELOG**
 
 Under `## [Unreleased]` → `### Added`:
 
@@ -1494,7 +1598,7 @@ Under `## [Unreleased]` → `### Added`:
   auto-approved. Example: `examples/ddd-architectural-challenges/variants/cursor-vanilla`. ([#NN])
 ```
 
-- [ ] **Step 2: README**
+- [x] **Step 2: README**
 
 In `README.md` line 23, replace `**Today** it drives Claude Code, the Codex CLI, and the Gemini CLI; **planned:** Pi, Cursor, and router-based setups.` with `**Today** it drives Claude Code, the Codex CLI, the Gemini CLI, and the Cursor CLI; **planned:** Pi and router-based setups.`
 
@@ -1502,7 +1606,7 @@ On line 62 replace `Claude Code vs. Codex vs. Gemini` with `Claude Code vs. Code
 
 On line 93 replace ``Your existing `claude` / `codex` / `gemini` CLI auth covers it`` with ``Your existing `claude` / `codex` / `gemini` CLI auth covers it (Cursor variants need a `CURSOR_API_KEY`)``.
 
-- [ ] **Step 3: CLAUDE.md**
+- [x] **Step 3: CLAUDE.md**
 
 1. Package structure: under `agents/`, add `configurable_cursor.py # Harbor-compatible Cursor CLI agent with sandbox file injection + MCP auto-approve`.
 2. **Variant system** bullet: change `(\`agent = "claude"\`, \`agent = "codex"\`, or \`agent = "gemini"\`)` to `(\`agent = "claude"\`, \`agent = "codex"\`, \`agent = "cursor"\`, or \`agent = "gemini"\`)` and after the Gemini sentence add `Cursor variants reuse the Codex layout: \`AGENTS.md\` → \`/app/AGENTS.md\` and \`agents_skills/\` through the native channel into \`~/.cursor/skills\`.`
@@ -1515,7 +1619,7 @@ On line 93 replace ``Your existing `claude` / `codex` / `gemini` CLI auth covers
 4. `variant.toml` section: change the `agent` comment to `# "claude" | "codex" | "cursor" | "gemini"`.
 5. Benchmark project structure: next to `AGENTS.md`, change the comment to `# Codex / Cursor instructions (injected into /app/AGENTS.md)`, and next to `agents_skills/` change it to `# Optional: Codex/Cursor skill snapshots (native skill-injection → $HOME/.agents/skills/ or ~/.cursor/skills/)`.
 
-- [ ] **Step 4: ARCHITECTURE.md**
+- [x] **Step 4: ARCHITECTURE.md**
 
 In the agent class diagram, add after the `GeminiCli` class:
 
@@ -1543,7 +1647,7 @@ after `GeminiCli <|-- ConfigurableGemini`: `    CursorCli <|-- ConfigurableCurso
 
 In the paragraph below the diagram, change `` `ConfigurableClaude`, `ConfigurableCodex`, and `ConfigurableGemini` each add `` to `` `ConfigurableClaude`, `ConfigurableCodex`, `ConfigurableGemini`, and `ConfigurableCursor` each add ``, and append: `` `ConfigurableCursor` additionally appends `--approve-mcps` when the task declares MCP servers. ``. In the next list change the `variant.toml` line to include `agent = "cursor"`, and in line 23's mermaid node change `Configurable{Claude,Codex,Gemini}.setup()` to `Configurable{Claude,Codex,Gemini,Cursor}.setup()`. Add `configurable_cursor.py # Harbor-compatible Cursor CLI agent with sandbox file injection` to the file listing next to `configurable_gemini.py`.
 
-- [ ] **Step 5: Skills**
+- [x] **Step 5: Skills**
 
 `.claude/skills/nasde-benchmark-creator/SKILL.md`:
 - Line 260: `agent = "claude"   # or "codex", "cursor" or "gemini"`.
@@ -1597,7 +1701,7 @@ Create the key in the Cursor dashboard. List the models your account can run wit
 
 `.claude/skills/nasde-dev/SKILL.md` line 101: append `; cursor → \`CURSOR_API_KEY\` in the environment or \`.env\` (no script)`.
 
-- [ ] **Step 6: Quality gates, commit, push, PR**
+- [x] **Step 6: Quality gates, commit, push, PR**
 
 ```bash
 uv run ruff check src/ tests/
@@ -1658,6 +1762,12 @@ Pass criteria:
 
 If the skill check fails while everything else passes, stop and report: per the spec this triggers the approach-B fallback (a nasde-owned agent that registers skills inside `run()`), which needs its own design pass.
 
+**As run (2026-11-20):** the canary variant was not used. `cursor-vanilla` on `composer-2.5` ran across all four `ddd-architectural-challenges` tasks (job `2026-11-20__13-55-57__cursor-vanilla__68eff2`), judged by the Cursor backend:
+
+- `reward.txt` = 1 on all four; `model_name = "cursor/composer-2.5"`; `cost_usd` non-null and equal to `agent_reported_cost_usd` (`cost_source = "cursor_pricing"`), e.g. $0.1226 on `ddd-threshold-discount`.
+- `cache_write_tokens` = 0 on every trial. Cursor reported `usage_totals.cacheWriteTokens = 0` for Composer, so `> 0` is not a valid criterion for a Composer run. Re-check it on a Claude-through-Cursor slug.
+- **Open:** the skill check (trajectory references the skill + marker file) has not been run. Run it with the canary above or with `cursor-ntcoding-tactical-ddd`; the approach-B decision still depends on it.
+
 - [ ] **Step 4: Clean up**
 
 ```bash
@@ -1684,7 +1794,7 @@ git switch -c feat/cursor-judge
 **Interfaces:**
 - Produces: `default_evaluator_model(backend: str) -> str` in `nasde_toolkit.config` (`"cursor"` → `"claude-opus-5-5-high"`, anything else → `"claude-opus-5-5"`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_config.py` (add `default_evaluator_model` to its `nasde_toolkit.config` import):
 
@@ -1741,12 +1851,12 @@ def test_override_eval_judge_cursor_with_explicit_model() -> None:
     assert config.evaluation.model == "gpt-5.6-sol-high"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_config.py tests/test_cli.py -k "cursor or default_evaluator" -v`
 Expected: FAIL (`ImportError: cannot import name 'default_evaluator_model'`; the CLI test exits because `cursor` is rejected).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/nasde_toolkit/config.py`, add near the top (after imports):
 
@@ -1798,12 +1908,12 @@ def _override_eval_judge(config: ProjectConfig, model: str | None, backend: str 
 
 Change the `--eval-backend` option help to `"Override the judge backend for this run: claude | codex | cursor."`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_config.py tests/test_cli.py -v`
 Expected: all PASS (including the existing `test_override_eval_judge_*` tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/nasde_toolkit/config.py src/nasde_toolkit/cli.py tests/test_config.py tests/test_cli.py
@@ -1821,7 +1931,7 @@ git commit -m "config: backend-aware default judge model; accept --eval-backend 
 - Consumes: `EvaluationConfig` fields `model`, `allowed_tools`, `mcp_config`, `skills_dir`, `append_system_prompt`, `include_trajectory`; `AGENT_DIFF_FILENAME`.
 - Produces: `CursorSubprocessBackend` satisfying `EvaluatorBackend`; `create_backend(EvaluationConfig(backend="cursor"))` returns it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_evaluator_backends.py` (add `import asyncio`, `import json`, `import subprocess` at the top if absent, and `from nasde_toolkit.evaluator_backends.cursor_subprocess import CursorSubprocessBackend`):
 
@@ -2012,12 +2122,12 @@ def test_cursor_backend_run_raises_on_nonzero_exit(tmp_path: Path, monkeypatch: 
         asyncio.run(CursorSubprocessBackend().run_evaluation("P", tmp_path, EvaluationConfig(backend="cursor"), tmp_path))
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_evaluator_backends.py -v`
 Expected: collection fails with `ModuleNotFoundError: No module named 'nasde_toolkit.evaluator_backends.cursor_subprocess'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/nasde_toolkit/evaluator_backends/cursor_subprocess.py`:
 
@@ -2210,6 +2320,25 @@ def _extract_result_text(stdout: str) -> str:
     return result if isinstance(result, str) else ""
 ```
 
+**As built (review round):** three changes to the module above.
+
+1. `_cursor_cli_logged_in` is `@functools.lru_cache(maxsize=1)`, so `cursor-agent status` runs once per process instead of before every evaluation.
+2. The `allowed_tools` warning moved into a module-level `@functools.lru_cache(maxsize=1)` `_warn_allowed_tools_ignored()`, so it prints once per process. `_warn_unsupported_options` calls it.
+3. `_prepare_temp_workspace` wraps the population step so a failure (e.g. a missing `mcp_config`) never leaks the temp dir:
+
+```python
+    def _prepare_temp_workspace(self, eval_config: EvaluationConfig, project_root: Path) -> Path:
+        temp_workspace = Path(tempfile.mkdtemp(prefix="nasde_eval_cursor_"))
+        try:
+            _populate_cursor_dir(temp_workspace / ".cursor", eval_config, project_root)
+        except BaseException:
+            shutil.rmtree(temp_workspace, ignore_errors=True)
+            raise
+        return temp_workspace
+```
+
+Here `_populate_cursor_dir(cursor_dir, eval_config, project_root)` holds the former body: `mkdir`, copy `skills_dir`, copy `mcp_config`. Added tests: `test_cursor_backend_validate_auth_checks_status_once_per_process`, `test_cursor_cli_logged_in_false_on_os_error` / `_on_timeout`, `test_cursor_backend_warns_on_allowed_tools_only_once`, `test_cursor_backend_run_leaks_no_temp_workspace_when_preparation_fails`, and cleanup on `is_error` / non-zero exit. Tests that touch the cached helpers clear the caches first.
+
 In `src/nasde_toolkit/evaluator_backends/__init__.py`, replace the `else:` branch with:
 
 ```python
@@ -2223,24 +2352,67 @@ In `src/nasde_toolkit/evaluator_backends/__init__.py`, replace the `else:` branc
         )
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_evaluator_backends.py -v && uv run mypy src/nasde_toolkit/evaluator_backends/`
 Expected: all PASS; mypy `Success`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/nasde_toolkit/evaluator_backends/cursor_subprocess.py src/nasde_toolkit/evaluator_backends/__init__.py tests/test_evaluator_backends.py
 git commit -m "evaluator: add the cursor judge backend"
 ```
 
+### Task 12a (added in review): Absolute prompt paths and a `cursor/<model>` judge stamp
+
+**Why:** the Cursor judge's cwd is the empty temp `--workspace`, so "analyze the current working directory" and `../../agent/trajectory.json` point at nothing. Separately, a Cursor judge and a Claude judge on the same model name (`claude-opus-5-5`) would be averaged into one cluster.
+
+**Files:**
+- Modify: `src/nasde_toolkit/evaluator.py`
+- Test: `tests/test_evaluator.py`
+
+- [x] **Step 1: Implement**
+
+In `evaluate_trial`:
+
+```python
+    artifacts_dir = str(workspace_path.absolute()) if _judge_runs_outside_workspace(eval_config) else None
+```
+
+```python
+    evaluation.evaluator_model = _judge_model_stamp(eval_config)
+```
+
+`_resolve_trajectory_path` returns `str(trajectory_file.absolute())` instead of `"../../agent/trajectory.json"`, for every backend. New helpers:
+
+```python
+def _judge_runs_outside_workspace(eval_config: EvaluationConfig) -> bool:
+    return eval_config.backend == "cursor" or bool(eval_config.skills_dir)
+
+
+def _judge_model_stamp(eval_config: EvaluationConfig) -> str:
+    if eval_config.backend == "cursor" and "/" not in eval_config.model:
+        return f"cursor/{eval_config.model}"
+    return eval_config.model
+```
+
+The bare slug is still what the backend passes to `--model`; only the recorded `evaluator_model` is prefixed.
+
+- [x] **Step 2: Tests**
+
+`test_cursor_backend_prompt_carries_absolute_workspace_and_trajectory_paths`, `test_claude_backend_without_skills_dir_keeps_cwd_workspace_prompt`, `test_claude_backend_with_skills_dir_prompt_carries_absolute_workspace`, `test_cursor_backend_stamps_prefixed_judge_model`, `test_claude_backend_stamps_bare_judge_model`, `test_judge_model_stamp_leaves_slash_models_alone`, `test_cursor_and_claude_judges_with_same_model_never_share_a_cluster`.
+
+- [x] **Step 3: Docs**
+
+`CLAUDE.md` Evaluator bullet and the CHANGELOG judge entry mention the absolute paths and the `cursor/<model>` stamp.
+
 ### Task 13: PR 3 docs and scaffold
 
 **Files:**
 - Modify: `src/nasde_toolkit/scaffold/__init__.py`, `tests/test_scaffold.py`, `CHANGELOG.md`, `README.md`, `CLAUDE.md`, `.claude/skills/nasde-benchmark-runner/SKILL.md`, `.claude/skills/nasde-dev/SKILL.md`
 
-- [ ] **Step 1: Write the failing scaffold test**
+- [x] **Step 1: Write the failing scaffold test**
 
 Append to `tests/test_scaffold.py`:
 
@@ -2253,7 +2425,7 @@ def test_nasde_toml_template_mentions_cursor_backend() -> None:
 
 Run: `uv run pytest tests/test_scaffold.py -v` — Expected: the new test FAILS.
 
-- [ ] **Step 2: Implement the scaffold change**
+- [x] **Step 2: Implement the scaffold change**
 
 In `src/nasde_toolkit/scaffold/__init__.py`, change the `[evaluation]` block of `NASDE_TOML_TEMPLATE` to:
 
@@ -2267,7 +2439,17 @@ dimensions_file = "assessment_dimensions.json"
 
 Run: `uv run pytest tests/test_scaffold.py -v` — Expected: PASS (the asserted string is a prefix of the new line).
 
-- [ ] **Step 3: Docs**
+**As built:** the comment reads `# backend = "claude"  # "claude" | "codex" | "cursor" (for "cursor", also set model = "claude-opus-5-5-high")`. The scaffold writes an explicit `model = "claude-opus-5-5"`, so the backend-aware default never applies to a scaffolded project, and "cursor defaults model" would mislead. A second test pins the wording:
+
+```python
+def test_nasde_toml_template_tells_cursor_users_to_set_the_model() -> None:
+    from nasde_toolkit.scaffold import NASDE_TOML_TEMPLATE
+
+    assert 'for "cursor", also set model = "claude-opus-5-5-high"' in NASDE_TOML_TEMPLATE
+    assert "cursor defaults model" not in NASDE_TOML_TEMPLATE
+```
+
+- [x] **Step 3: Docs**
 
 `CHANGELOG.md` → `## [Unreleased]` → `### Added`:
 
@@ -2292,7 +2474,7 @@ Run: `uv run pytest tests/test_scaffold.py -v` — Expected: PASS (the asserted 
 
 `.claude/skills/nasde-dev/SKILL.md`, in the **Evaluator** bullet of step 3: append ` With \`backend = "cursor"\`, the judge needs \`CURSOR_API_KEY\` or a logged-in \`cursor-agent\` instead.`
 
-- [ ] **Step 4: Quality gates, commit, push, PR**
+- [x] **Step 4: Quality gates, commit, push, PR**
 
 ```bash
 uv run ruff check src/ tests/
@@ -2311,7 +2493,7 @@ Replace `[#NN]` with the printed PR number, add the link-ref, commit `changelog:
 
 **Do not start without the repo owner's explicit go-ahead for this run.**
 
-- [ ] **Step 1: Re-evaluate an existing job with the Cursor judge**
+- [x] **Step 1: Re-evaluate an existing job with the Cursor judge**
 
 Pick any existing job with completed trials (e.g. the one from Task 10, or any job under `examples/ddd-architectural-challenges/jobs/`):
 
@@ -2320,7 +2502,7 @@ J=$(ls -dt examples/ddd-architectural-challenges/jobs/*/ | head -1)
 uv run nasde eval "$J" --eval-backend cursor --eval-repetitions 1 -C examples/ddd-architectural-challenges
 ```
 
-- [ ] **Step 2: Check the evaluation**
+- [x] **Step 2: Check the evaluation**
 
 ```bash
 T=$(ls -d $J/*/ | head -1)
@@ -2330,8 +2512,37 @@ git -C "$T/artifacts/workspace" status --porcelain | rg "\.cursor" || echo "no .
 ```
 
 Pass criteria:
-- The newest `assessment_eval_<N>.json` has `evaluator_model == "claude-opus-5-5-high"` and a numeric `normalized_score`.
+- The newest `assessment_eval_<N>.json` has `evaluator_model == "claude-opus-5-5-high"` and a numeric `normalized_score`. **As built:** after Task 12a the stamp is `"cursor/claude-opus-5-5-high"`.
 - `assessment_summary.json` shows it as its own cluster (different `evaluator_model` from earlier Claude-backend evaluations).
 - The trial workspace shows `no .cursor leak`.
 
 If the judge fails with a permissions error reading files under the `--add-dir` roots in `--mode ask`, stop and report: the fallback is to drop `--mode ask` and rely on the prompt alone, which is a security trade-off the owner must approve.
+
+**As run (2026-11-20):** the Cursor judge scored the Task 10 job. The project had `backend = "cursor"`, an explicit `model = "claude-opus-5-5"` (not `-high`), `skills_dir = "./evaluator_skills"`, 3 repetitions. All four trials scored with numeric `normalized_score`, stamped `cursor/claude-opus-5-5`, and there was no `.cursor` leak. No `--add-dir` permission problem, so the `--mode ask` fallback is not needed. Side finding: `cursor-agent` accepts the bare `claude-opus-5-5` slug, contrary to the spec's premise; the `-high` default is kept. Not verified: whether the judge loaded the `evaluator_skills` from the temp workspace, and the `mcp_config` / `--approve-mcps` path.
+
+---
+
+## Follow-up — Opik
+
+### Task 15 (added after release): Opik cost and steps for Cursor traces
+
+**Shipped in [#8].** Cursor's `CursorCli` never assigns per-step `metrics`, so under the ADR-006 deferred-metrics patch its agent steps waited forever and Opik traces had no tokens or cost.
+
+**Files:**
+- Modify: `src/nasde_toolkit/runner.py` (`_patch_opik_deferred_metrics`)
+- Test: `tests/test_opik_step_patch.py`
+
+- [x] **Step 1: Implement**
+
+Inside `_patch_opik_deferred_metrics`, additionally patch `harbor.models.trajectories.trajectory.Trajectory.__init__`. After the original init:
+
+1. `_flush_pending_agent_steps(trajectory)` emits a span for every step that still holds `_opik_trace_data` but has not emitted one.
+2. `_create_session_span(trajectory)` returns early when `final_metrics` is missing or any step already carries token usage. Otherwise it emits one `llm` span named `agent_session` under the current trace and span: usage from `final_metrics` (`prompt_tokens`, `completion_tokens`, `total_tokens`), `total_cost = final_metrics.total_cost_usd`, `model = trajectory.agent.model_name`, metadata `created_from`, `session_id`, `cost_source`, and tags `harbor`/`agent`/`session`. A per-process set of trace ids prevents a second session span for the same trace. Errors from the Opik client are swallowed, like the existing step-span path.
+
+- [x] **Step 2: Tests**
+
+`tests/test_opik_step_patch.py`: `test_trajectory_flushes_agent_steps_that_never_got_metrics`, `test_trajectory_with_session_only_metrics_emits_session_span_with_cost`, `test_trajectory_with_per_step_usage_emits_no_session_span`, `test_session_span_is_emitted_once_per_trace`, and `test_cursor_trajectory_reports_agent_steps_and_session_cost`. The last one runs real Cursor stream events through `ConfigurableCursor._convert_events_to_trajectory`; it checks that the agent step is flushed and the session span is emitted.
+
+- [x] **Step 3: Docs**
+
+The `_patch_opik_deferred_metrics` docstring describes the Cursor case. Only the `[#8]` link-ref was added to `CHANGELOG.md`; there is no `[Unreleased]` entry for this change yet.

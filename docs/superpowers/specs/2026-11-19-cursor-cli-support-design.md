@@ -1,7 +1,8 @@
 # Cursor CLI Support
 
 **Date:** 2026-11-19
-**Status:** Approved (design review)
+**Status:** Implemented — [#2], [#3], [#4], [#7], [#8] (updated 2026-11-23 to
+match what shipped; see [Changes after the design review](#changes-after-the-design-review))
 
 ## Problem
 
@@ -29,7 +30,9 @@ Plus the token/cost economics needed so Cursor trials get a non-null `cost_usd`.
 
 Out of scope: injecting the host `cursor-agent login` token into the sandbox
 (API key only), `.cursor/rules/` support, long-context price premiums, an Opik
-`provider` attribution fix.
+`provider` attribution fix. (Opik *cost and token* reporting for Cursor traces
+was not in the original scope either; after the agent shipped, Cursor traces
+turned out to carry no cost or tokens, so it was added in [#8] — see §4.)
 
 ## Decisions
 
@@ -40,12 +43,14 @@ Out of scope: injecting the host `cursor-agent login` token into the sandbox
 | Skill snapshots | Reuse `agents_skills/` (a Codex variant becomes a Cursor variant by changing one line). |
 | Cost source of truth | nasde's catalog; Harbor's reported cost recorded alongside for audit. |
 | Model name | Provider-qualified `cursor/<slug>` end-to-end (the runner adds the prefix, so a variant may write a bare slug). |
-| Price lookup | `cursor/<slug>` → `cursor/<base>` → `<base>`; bundled `cursor/` entries only where Cursor's rate differs from the vendor's. |
+| Price lookup | `cursor/<slug>` → `cursor/<base>` → `<slug>` → `<base>`; bundled `cursor/` entries only where Cursor's rate differs from the vendor's (Composer, and every Claude model with a cache-write rate). |
 | Approach | Thin wrappers on Harbor's `CursorCli` + a layered slug lookup in pricing + a third subprocess judge backend. |
 
 Fallback: if the live smoke test shows Harbor's install-time skill registration
 is not discovered by `cursor-agent` (the ADR-012 timing risk), replace the wrapper
 with a nasde-owned agent on `BaseInstalledAgent` that registers skills inside `run()`.
+As of 2026-11-23 that smoke check has not been run (see Testing → live smoke),
+so the fallback decision is still open.
 
 ## Design
 
@@ -70,12 +75,24 @@ with a nasde-owned agent on `BaseInstalledAgent` that registers skills inside `r
 - `_agent_import_path("cursor")` →
   `nasde_toolkit.agents.configurable_cursor:ConfigurableCursor`.
 - New `_is_cursor_agent()`; `_agent_type_from_import_path` returns `"cursor"`.
-- `_build_merged_config` qualifies a Cursor agent's `model_name`: a bare slug
-  (`composer-2.5`, from `variant.toml` or `--model`) becomes `cursor/composer-2.5`,
-  which is the `provider/model` form Harbor's `CursorCli._model_arg()` requires.
-  An already-qualified name passes through. The qualified name is what lands in
-  `config.json`, the trajectory, `assessment_summary.json` and `metrics.json`;
-  the run-summary table strips `cursor/` for display, as it already strips `google/`.
+- **One classifier.** Auth (`_ensure_auth`), skill routing and model
+  qualification all branch on `_agent_type_from_import_path`, not on separate
+  `_is_*_agent` substring checks. An import path that matches two families
+  (e.g. `gemini_cursor_bridge.agent:BridgeAgent`) is therefore classified once,
+  the same way everywhere, instead of being checked for Gemini auth but
+  qualified as Cursor.
+- `_build_merged_config` qualifies a Cursor agent's `model_name` with
+  `_qualify_model_name`: a bare slug (`composer-2.5`, from `variant.toml` or
+  `--model`) becomes `cursor/composer-2.5`, which is the `provider/model` form
+  Harbor's `CursorCli._model_arg()` requires. Any other provider prefix is
+  **replaced**, not kept: `anthropic/claude-opus-5-5-high` becomes
+  `cursor/claude-opus-5-5-high`, so a Cursor trial always reaches the `cursor/`
+  price entries. A name that already starts with `cursor/` is unchanged. The
+  qualified name is what lands in `config.json`, the trajectory,
+  `assessment_summary.json` and `metrics.json`; the run-summary table strips
+  `cursor/` for display, as it already strips `google/`.
+- The `nasde run` header labels the agent "Cursor" (it showed "Claude Code"
+  until [`9d3254d`](https://github.com/krzykrucz/nasde-toolkit/commit/9d3254d)).
 - `_AGENT_SKILLS_SUBDIR["cursor"] = "agents_skills"` — snapshot skills,
   `[[skill]]` references and `[nasde.plugin]` skills all flow through the
   existing native `config.agent.skills` path (ADR-012), unchanged.
@@ -142,6 +159,10 @@ closed set (`-none|-minimal|-low|-medium|-high|-xhigh|-max`), optionally precede
 by `-thinking`, or a bare trailing `-thinking`:
 `claude-fable-5-thinking-high` → `claude-fable-5`, `gpt-5.3-codex-xhigh` →
 `gpt-5.3-codex`. `-fast` is deliberately not stripped (fast modes cost more).
+For the same reason, a bracket group that contains `fast=true`
+(`claude-opus-4-8[fast=true]`, `[effort=high,fast=true]`) leaves the slug
+**untouched**, so it resolves as unpriced instead of silently taking the
+standard rate; `fast=false` is stripped like any other bracket option.
 
 No match → unpriced: `cost_usd = null` + the existing warning. It is not a
 validation gate: a new Cursor suffix degrades to "unpriced", never blocks a run.
@@ -154,7 +175,14 @@ Wherever the effective catalog is shown, a non-exact match is labelled, e.g.
 `pricing_used.json` gains a `catalog_key` field per model.
 
 **Bundled `cursor/` entries** (`as_of = "2026-11-19"`,
-`source = "https://cursor.com/docs/models-and-pricing"`), per 1M tokens:
+`source = "https://cursor.com/docs/models-and-pricing"`), per 1M tokens.
+Composer, plus a `cursor/` twin of **every** Claude entry in the catalog that has
+a cache-write rate. The twin has the same input, cache-read and output rates as
+the vendor entry, with cache writes at 1.25x input. The design review listed only
+the four current Claude models; the rest were added because a Cursor trial on an
+older Claude model would otherwise fall through to the vendor's 2x cache-write
+rate. A test derives the expected set from the catalog, so a new Claude entry
+without a `cursor/` twin fails CI.
 
 | Key | Input | Cache write | Cache read | Output |
 |---|---|---|---|---|
@@ -163,6 +191,11 @@ Wherever the effective catalog is shown, a non-exact match is labelled, e.g.
 | `cursor/claude-sonnet-5-5` | 2.0 | 2.5 | 0.1 | 10.0 |
 | `cursor/claude-fable-5` | 10.0 | 12.5 | 1.0 | 50.0 |
 | `cursor/claude-fable-5-1` | 10.0 | 12.5 | 0.25 | 50.0 |
+| `cursor/claude-opus-5` | 5.0 | 6.25 | 0.5 | 25.0 |
+| `cursor/claude-opus-4-8`, `-4-7`, `-4-6`, `-4-5` | 5.0 | 6.25 | 0.5 | 25.0 |
+| `cursor/claude-sonnet-5` | 2.0 | 2.5 | 0.2 | 10.0 |
+| `cursor/claude-sonnet-4-6`, `-4-5` | 3.0 | 3.75 | 0.3 | 15.0 |
+| `cursor/claude-haiku-4-5` | 1.0 | 1.25 | 0.1 | 5.0 |
 
 OpenAI models through Cursor fall through to the existing vendor entries.
 `auto` stays unpriced: Cursor bills it as whatever model serves the request, so
@@ -197,13 +230,24 @@ cursor-agent -p --output-format json --mode ask --trust \
 
 - **Read-only via `--mode ask`.** Cursor has no `--allowedTools` equivalent; if
   `allowed_tools` is set, print a yellow warning that it is ignored on this
-  backend.
+  backend — **once per process**, not once per evaluation (a job runs
+  `trials × eval_repetitions` evaluations).
 - **Always a temporary `--workspace`.** Unlike the Claude backend (temp dir only
   when skills are configured), Cursor may write `.cursor/` state into its
   workspace; anything written into the trial workspace would leak into
   `changes.patch` and calibration PRs. The temp dir holds `.cursor/skills/`
   (copied from `skills_dir`) and `.cursor/mcp.json` (copied from `mcp_config`;
-  same `mcpServers` shape as Claude's). Removed in `finally`.
+  same `mcpServers` shape as Claude's). Removed in `finally`, and also when
+  populating it fails (e.g. a missing `mcp_config` file), so a bad config never
+  leaks `nasde_eval_cursor_*` dirs into the temp folder.
+- **Absolute paths in the prompt.** The judge's cwd is that empty temp dir, so a
+  prompt saying "analyze the current working directory" points at nothing.
+  Whenever the judge runs outside the trial workspace (`backend = "cursor"`, or
+  `skills_dir` set on any backend, which also uses a temp cwd), the evaluator
+  hands it the **absolute** workspace path. The trajectory path is now always
+  absolute (`<trial>/agent/trajectory.json`), replacing the
+  `../../agent/trajectory.json` relative path, which only resolved from the
+  workspace itself.
 - **Trial dir** via `--add-dir` under the same rule as Claude: when
   `include_trajectory` is on or `agent_changes.diff` exists.
 - **`append_system_prompt`** has no flag → prepended to the prompt as a preamble.
@@ -214,6 +258,9 @@ cursor-agent -p --output-format json --mode ask --trust \
 
 **Auth (host).** `CURSOR_API_KEY` if set; otherwise the host `cursor-agent` login,
 checked by `cursor-agent status`. Neither → error pointing at `cursor-agent login`.
+The `status` check runs once per process and its result is cached, instead of
+spawning a subprocess before every evaluation. An `OSError` or a 30 s timeout
+counts as "not logged in".
 `validate_cli_installed` checks `shutil.which("cursor-agent")` with an install hint
 and the "set a different backend or pass `--without-eval`" escape hatch.
 
@@ -222,9 +269,30 @@ default is `claude-opus-5-5-high` (the Claude backend's `claude-opus-5-5` is not
 valid Cursor slug). "Unset" means the `model` key is absent from the
 `[evaluation]` table: the backend-aware default is chosen in `config.py` while
 parsing, so an explicit `model = "claude-opus-5-5"` is passed through untouched
-(and rejected by `cursor-agent` itself, consistent with the no-local-validation
-policy). Its evaluations cluster separately because `evaluator_model` differs —
-correct by the existing clustering contract.
+(and rejected by `cursor-agent` itself if invalid, consistent with the
+no-local-validation policy).
+
+*Observed after release:* `cursor-agent` **accepted** a bare `claude-opus-5-5`.
+The 2026-11-20 example run with `backend = "cursor"` and
+`model = "claude-opus-5-5"` completed and scored every trial. So the premise
+above ("not a valid Cursor slug") is too strong. The default stays
+`claude-opus-5-5-high` because it is the slug `cursor-agent --list-models`
+prints and pins the effort explicitly. Which effort Cursor applies to the bare
+slug was not checked.
+
+Because `nasde init` writes an explicit `model = "claude-opus-5-5"` into
+`[evaluation]`, the backend-aware default never applies to a scaffolded
+project. The scaffold's commented `backend` line therefore tells Cursor users to
+set the model themselves (`for "cursor", also set model = "claude-opus-5-5-high"`)
+rather than claiming the model is defaulted.
+
+**Evaluator-model stamp.** Cursor-judged evaluations are stamped
+`evaluator_model = "cursor/<model>"` (the bare slug is still what is passed to
+`--model`; a model that already contains `/` is left as is). Without the prefix,
+a Cursor judge and a Claude judge configured with the same model name
+(`claude-opus-5-5`) would be averaged into one cluster even though they are
+different harnesses. With it, they cluster separately under the existing
+clustering contract.
 
 **Wiring.** `create_backend()` gains the `cursor` branch; the "Supported:" error
 lists `'claude', 'codex', 'cursor'`.
@@ -235,9 +303,38 @@ lists `'claude', 'codex', 'cursor'`.
 **Host auth check:** `cursor-agent status` exits 0 whether or not a user is
 logged in, so the check parses its output (`Logged in as ...` vs `Not logged in`).
 
-**Verify during the live smoke run:** that `--workspace` picks up
-`.cursor/skills` and `.cursor/mcp.json`, and that `--mode ask` permits reading
-files across the `--add-dir` roots.
+**Live check (2026-11-20, `examples/ddd-architectural-challenges`, `skills_dir`
+set, no `mcp_config`):** `--mode ask` reads files across the `--add-dir` roots.
+Every trial was scored from the workspace plus `agent_changes.diff` in the trial
+dir, and `git status` in the trial workspace shows no `.cursor` leak. Still
+**unconfirmed**: whether the judge actually loads `.cursor/skills` from the temp
+`--workspace` (the run completed, but nothing shows the evaluator skill was
+used), and `.cursor/mcp.json` + `--approve-mcps` (no MCP config in that project).
+
+### 4. Opik reporting for Cursor traces ([#8])
+
+nasde's ADR-006 patch defers each Harbor `Step` span until Harbor assigns the
+step's `metrics`. Cursor's `CursorCli` never assigns per-step metrics; usage and
+cost exist only on the trajectory's `final_metrics`. Under `--with-opik`, Cursor
+agent steps therefore waited forever and the Opik trace had no tokens and no
+cost.
+
+`_patch_opik_deferred_metrics` now also patches `Trajectory.__init__`:
+
+- **Flush pending steps.** Agent steps still waiting for metrics are emitted
+  when the trajectory is built, so they appear in the trace.
+- **One `agent_session` span.** When no step carried token usage and
+  `final_metrics` has usage or `total_cost_usd`, one `llm` span named
+  `agent_session` is emitted. It carries `prompt_tokens` / `completion_tokens` /
+  `total_tokens`, `total_cost` (Cursor's own figure), the model, the session id
+  and `cost_source` in metadata. It is emitted at most once per trace.
+- Harnesses that do report per-step usage (Claude, Codex) are unaffected: the
+  session span is skipped when any step has usage, so tokens are never counted
+  twice.
+
+This is Opik-only. nasde's own `assessment_summary.json` / `metrics.json`
+economics come from `final_metrics` through `token_metrics.py` and were already
+correct.
 
 ## Testing
 
@@ -264,6 +361,26 @@ Unit tests (fakes only, no live calls):
   prepending; `result` extraction; `is_error` raises; factory branch.
 - `tests/test_config.py`: cursor backend default model.
 
+Added during review, beyond the list above:
+
+- `tests/test_pricing.py`: `[fast=true]` brackets stay unpriced (`fast=false`
+  is stripped); the `cursor/` Claude twins are checked against every Claude
+  catalog entry with a cache-write rate, derived from the catalog.
+- `tests/test_runner.py`: `_qualify_model_name` replaces any provider prefix;
+  an import path matching two families is classified once for auth, skills and
+  model qualification.
+- `tests/test_evaluator.py`: the Cursor (and `skills_dir`) prompt carries
+  absolute workspace and trajectory paths; the `cursor/<model>` stamp, and
+  Cursor and Claude judges on the same model never share a cluster.
+- `tests/test_evaluator_backends.py`: `cursor-agent status` runs once per
+  process, `OSError`/timeout means "not logged in", the `allowed_tools`
+  warning prints once, and the temp workspace is removed when preparation fails
+  and on `is_error` / non-zero exit.
+- `tests/test_scaffold.py`: the commented `backend` line tells Cursor users to
+  set the model.
+- `tests/test_opik_step_patch.py` ([#8]): Cursor agent steps are flushed and one
+  `agent_session` span carries session usage and cost; never duplicated.
+
 Live smoke (each LLM run individually authorized by the owner):
 
 1. A throwaway `cursor-skill-canary` variant (not committed; the shipped example
@@ -273,6 +390,24 @@ Live smoke (each LLM run individually authorized by the owner):
    `cache_write_tokens > 0`, canary skill natively invoked. A skill failure
    triggers the approach-B fallback.
 2. `nasde eval` with `backend = "cursor"` against that job.
+
+What actually ran (2026-11-20): instead of the canary, `cursor-vanilla` on
+`composer-2.5` across the four `ddd-architectural-challenges` tasks, judged by
+`backend = "cursor"` with `model = "claude-opus-5-5"`, 3 repetitions.
+
+- Passed: reward written (1 on all four tasks); `trajectory.json` present;
+  `model_name = "cursor/composer-2.5"`; `cost_usd` non-null and equal to the
+  harness's own `agent_reported_cost_usd` (`cost_source = "cursor_pricing"`),
+  e.g. $0.1226 on `ddd-threshold-discount`; evaluations stamped
+  `cursor/claude-opus-5-5`; no `.cursor` leak in the workspace.
+- Criterion did not hold, and does not apply: `cache_write_tokens > 0`.
+  Cursor reported `usage_totals.cacheWriteTokens = 0` for Composer (only cache
+  reads), so the extraction path is exercised by unit tests only. A
+  Claude-through-Cursor run is the live test for it.
+- **Not yet verified:** native skill registration (the canary). No
+  skill-carrying Cursor variant (`cursor-ntcoding-tactical-ddd`, or a canary)
+  has been run, so the ADR-012 timing risk and the approach-B fallback are still
+  open.
 
 Quality gates per `nasde-dev`: `ruff check`, `ruff format --check`, `mypy`, `pytest`.
 
@@ -291,17 +426,51 @@ Quality gates per `nasde-dev`: `ruff check`, `ruff format --check`, `mypy`, `pyt
   `nasde-benchmark-creator` (Cursor variant example), `nasde-dev` (Cursor auth in
   the e2e step).
 - Scaffold: `NASDE_TOML_TEMPLATE` gains a commented
-  `# backend = "claude"  # "claude" | "codex" | "cursor"` line in `[evaluation]`.
-- Example: `cursor-vanilla` variant.
+  `# backend = "claude"  # "claude" | "codex" | "cursor" (for "cursor", also set model = "claude-opus-5-5-high")`
+  line in `[evaluation]`.
+- Examples: `cursor-vanilla`, plus `cursor-guided` and
+  `cursor-ntcoding-tactical-ddd` ([#7]) mirroring the Codex variants (the latter
+  ships the `tactical-ddd` skill under `agents_skills/`), all on `composer-2.5`.
 
 ## Rollout
 
-Three PRs:
+Planned as three PRs; shipped as five on `krzykrucz/nasde-toolkit`:
 
-1. **Economics** — `resolve_catalog_key` layered lookup, `cursor/` entries,
-   cache-write fallback, audit fields. Independent and useful on its own.
-2. **Cursor agent** — `ConfigurableCursor` + runner wiring + example variant.
-   Depends on PR 1 for non-null cost.
-3. **Cursor judge** — `CursorSubprocessBackend`. Independent of 1 and 2.
+1. **Economics** — [#2]: `resolve_catalog_key` layered lookup, `cursor/`
+   entries, cache-write fallback, audit fields, ADR-015.
+2. **Cursor agent** — [#3]: `ConfigurableCursor` + runner wiring +
+   `cursor-vanilla`. Built on the #2 branch and squash-merged into `main` after it.
+3. **Cursor judge** — [#4]: `CursorSubprocessBackend`, backend-aware default
+   model, absolute prompt paths, `cursor/<model>` stamp.
+4. **Examples** — [#7]: `cursor-guided`, `cursor-ntcoding-tactical-ddd`.
+5. **Opik** — [#8]: Cursor agent steps and the `agent_session` cost span (§4).
 
-Each PR carries its own CHANGELOG entry and doc updates.
+#2, #3, #4 and #7 each carry their own CHANGELOG entry and doc updates.
+
+## Changes after the design review
+
+Everything below is already folded into the sections above; this list is the
+index.
+
+| Area | Design review said | Shipped | PR |
+|---|---|---|---|
+| Slug normalization | Strip any trailing bracket group | A bracket with `fast=true` keeps the slug intact → unpriced | [#2] |
+| `cursor/` price entries | Composer + four current Claude models | Composer + a twin for every Claude entry with a cache-write rate (13), guarded by a catalog-derived test | [#2] |
+| Model qualification | Bare slug → `cursor/<slug>`; qualified passes through | Any provider prefix replaced by `cursor/` | [#3] |
+| Agent classification | Separate `_is_*_agent` checks | One classifier (`_agent_type_from_import_path`) for auth, skills and model | [#3] |
+| Run header | — | Labels Cursor variants "Cursor" | `9d3254d` |
+| Judge prompt | Relative paths | Absolute workspace path when the judge runs outside the workspace; trajectory path always absolute | [#4] |
+| Judge stamp | `evaluator_model = <model>` | `cursor/<model>` for the Cursor backend | [#4] |
+| Judge auth / warnings | Per evaluation | `cursor-agent status` cached and `allowed_tools` warning printed once per process | [#4] |
+| Judge temp workspace | Removed in `finally` | Also removed when preparing it fails | [#4] |
+| Scaffold comment | Mentions the cursor default model | Tells Cursor users to set the model (the scaffold's explicit model bypasses the default) | [#4] |
+| Bare `claude-opus-5-5` on Cursor | Rejected by `cursor-agent` | Accepted in the live run; default kept as `-high` | observed |
+| Opik | Out of scope | Session span with Cursor usage and cost | [#8] |
+| Examples | `cursor-vanilla` | + `cursor-guided`, `cursor-ntcoding-tactical-ddd` | [#7] |
+| Skill canary | Gate for approach B | Not run yet — still open | — |
+
+[#2]: https://github.com/krzykrucz/nasde-toolkit/pull/2
+[#3]: https://github.com/krzykrucz/nasde-toolkit/pull/3
+[#4]: https://github.com/krzykrucz/nasde-toolkit/pull/4
+[#7]: https://github.com/krzykrucz/nasde-toolkit/pull/7
+[#8]: https://github.com/krzykrucz/nasde-toolkit/pull/8
