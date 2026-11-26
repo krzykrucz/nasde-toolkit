@@ -21,8 +21,14 @@
 - `cost_source` values: `"pricing.toml"`, `"harbor:<extra.cost_source>"`, or `null`.
 - Harbor-cost fallback applies only to models starting with `cursor/`.
 - nasde never sets Harbor's `CursorCli` `pricing` kwarg — same as Claude (ADR-015 §7).
-- No LLM calls in unit tests. Every e2e run requires explicit user authorization.
+- No LLM calls in unit tests. Every e2e run requires explicit user authorization. In an unattended run, skip every "ASK USER FIRST" step and list the skipped steps in the final report.
 - Quality gates before every commit: `uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/ && uv run mypy src/nasde_toolkit/ && uv run pytest -q`.
+
+## Prerequisites (before Task 1)
+
+- **Dev tools:** run `uv sync --extra dev` (same as CI). `ruff`, `mypy` and `pytest` live in the `dev` extra, so a plain `uv sync` *uninstalls* them and the quality gates fail with "command not found".
+- **Commit hook:** `.claude/settings.json` has a `PreToolUse` hook that runs the quality gates before any shell command containing `git commit`. Agent harnesses that read Claude hooks (Cursor included) require the hook's stdout to be JSON and **block the command** otherwise. This branch already carries the fixed hook (gate output → stderr, stdout always `{}`, timeout 300s — the full suite takes ~90s). Hooks are loaded at session start, so start the implementation session from this branch's HEAD; a session started on an older checkout keeps the broken hook and cannot commit. Check before Task 1: `jq -r '.hooks.PreToolUse[0].hooks[0].command' .claude/settings.json` must end with `>&2; echo '{}'`.
+- The hook is non-blocking (it reports, never rejects), so it does not replace running the quality gates yourself.
 
 ## File Structure
 
@@ -38,6 +44,7 @@
 | `src/nasde_toolkit/evaluator_backends/cursor_subprocess.py` | Create | `cursor-agent -p` judge |
 | `src/nasde_toolkit/evaluator_backends/__init__.py` | Modify | Register `cursor` backend |
 | `scripts/export_cursor_api_key.sh`, `.ps1` | Create | Export `CURSOR_API_KEY` |
+| `.claude/settings.json` | Already fixed (Prerequisites) | Quality-gate commit hook emits valid JSON |
 | `examples/*/variants/cursor-vanilla/` | Create | Example variants |
 | Docs + skills + scaffold | Modify | User-facing documentation |
 | `tests/test_token_metrics.py`, `tests/test_configurable_cursor.py`, `tests/test_configurable_agents_options.py`, `tests/test_runner.py`, `tests/test_evaluator_backends.py`, `tests/test_pricing.py` | Modify/Create | Tests |
