@@ -23,7 +23,7 @@ Before running any benchmark, set up authentication tokens for the agents you pl
 
 **Always ask the user before running, never assume.** Two questions:
 
-1. **Which agents will you run?** (Claude / Codex / Gemini, any combination)
+1. **Which agents will you run?** (Claude / Codex / Gemini / Cursor, any combination)
 2. **For each agent, OAuth (subscription) or API key (per-token billing)?** Default recommendation: OAuth where available — no per-token cost, no env vars to manage.
 
 Then detect their OS and pick the matching script row from the table below. On Windows, also ask whether they're in **PowerShell** or **WSL** (cmd.exe is not directly supported — see "Windows: cmd.exe" below).
@@ -40,7 +40,7 @@ Below, `<SKILL_SCRIPTS>` is shorthand for whichever absolute path applies. Resol
 
 ### Step 2 — Run the right script per agent × OS
 
-Priority order: **Claude → Codex → Gemini.** Claude is required even for non-Claude variants when `[evaluation] backend = "claude"` (default), because the assessment evaluator spawns `claude` CLI as a subprocess.
+Priority order: **Claude → Codex → Gemini → Cursor.** Claude is required even for non-Claude variants when `[evaluation] backend = "claude"` (default), because the assessment evaluator spawns `claude` CLI as a subprocess.
 
 #### Claude Code
 
@@ -66,6 +66,10 @@ The script exports `CLAUDE_CODE_OAUTH_TOKEN`. This is required for both Claude v
 
 The OAuth scripts only **validate** `~/.codex/auth.json` (or `%USERPROFILE%\.codex\auth.json`) — `nasde` then opts Harbor into uploading it into the sandbox (it sets `CODEX_FORCE_AUTH_JSON=true` when no API key is present but the file exists; harbor 0.13's Codex agent otherwise defaults to `OPENAI_API_KEY` and would write an empty key). API key always takes priority over OAuth when both are present.
 
+#### Cursor CLI
+
+Cursor authenticates only with an API key: `export CURSOR_API_KEY=...` (or put it in the project `.env`), or `source <SKILL_SCRIPTS>/export_cursor_api_key.sh`. Use `agent = "cursor"` with a `cursor/` model (e.g. `cursor/composer-2.5`) and `AGENTS.md` for instructions. A Cursor agent run with the default Claude judge needs Claude auth as well; `[evaluation] backend = "cursor"` with `model = "cursor/claude-opus-5-5"` (or `--eval-backend cursor`) judges with `cursor-agent` instead.
+
 #### Gemini CLI
 
 | OS / shell | OAuth (Google account) | API key |
@@ -79,7 +83,7 @@ The OAuth scripts export `GEMINI_OAUTH_CREDS` (the raw JSON) — `ConfigurableGe
 
 ### Combined setup for cross-agent runs
 
-Resolve `<SKILL_SCRIPTS>` first, then run all three.
+Resolve `<SKILL_SCRIPTS>` first, then run the ones you need.
 
 **macOS / Linux / Windows WSL:**
 ```bash
@@ -87,6 +91,7 @@ SKILL_SCRIPTS=~/.claude/skills/nasde-benchmark-runner/scripts   # adjust if --sc
 source $SKILL_SCRIPTS/export_oauth_token.sh         # Claude (subscription)
 source $SKILL_SCRIPTS/export_codex_oauth_token.sh   # Codex (subscription) — or: export CODEX_API_KEY=...
 source $SKILL_SCRIPTS/export_gemini_oauth_token.sh  # Gemini (Google account) — or: export GEMINI_API_KEY=...
+source $SKILL_SCRIPTS/export_cursor_api_key.sh      # Cursor (API key) — or: export CURSOR_API_KEY=...
 ```
 
 **Windows PowerShell:**
@@ -95,6 +100,7 @@ $SkillScripts = "$env:USERPROFILE\.claude\skills\nasde-benchmark-runner\scripts"
 . "$SkillScripts\export_oauth_token.ps1"
 . "$SkillScripts\export_codex_oauth_token.ps1"
 . "$SkillScripts\export_gemini_oauth_token.ps1"
+. "$SkillScripts\export_cursor_api_key.ps1"
 ```
 
 ### Windows: cmd.exe
@@ -120,9 +126,9 @@ source $SKILL_SCRIPTS/export_codex_oauth_token.sh && source $SKILL_SCRIPTS/expor
   nasde run --variant codex-vanilla --tasks my-task -C path/to/benchmark
 ```
 
-Chain exactly the scripts the run needs: the agent's token (claude/codex/gemini) **and**
+Chain exactly the scripts the run needs: the agent's token (claude/codex/gemini/cursor) **and**
 the evaluator's token — the evaluator uses `[evaluation] backend` from `nasde.toml`, which
-defaults to `claude`, so a codex/gemini run with the default evaluator still needs
+defaults to `claude`, so a codex/gemini/cursor run with the default evaluator still needs
 `export_oauth_token.sh` too. In an interactive terminal session a one-time `source` in the
 same session is fine; the chaining rule matters for scripts, CI, and tool-driven runs.
 
@@ -213,6 +219,17 @@ model = "gpt-6.1-sol"
 ```
 This avoids accidentally inheriting the Claude model from `nasde.toml`.
 
+### Running Cursor variants
+
+Cursor variants use `AGENTS.md` and require `CURSOR_API_KEY` (shell, project `.env`, or `source <SKILL_SCRIPTS>/export_cursor_api_key.sh`).
+
+**CRITICAL: Cursor model must use `cursor/` prefix** (e.g. `cursor/composer-2.5`), set via `--model` or `variant.toml` (`agent = "cursor"`).
+
+```bash
+export CURSOR_API_KEY=your-key
+nasde run --variant cursor-vanilla --model cursor/composer-2.5 -C path/to/benchmark
+```
+
 ### Running Gemini CLI variants
 
 Gemini variants use `GEMINI.md` (instead of `CLAUDE.md`) and require either `gemini login` (Google account) or `GEMINI_API_KEY`/`GOOGLE_API_KEY` (API billing).
@@ -239,17 +256,18 @@ agent = "gemini"
 model = "google/gemini-3-flash-preview"
 ```
 
-### Cross-agent comparison (Claude vs Codex vs Gemini)
+### Cross-agent comparison (Claude vs Codex vs Gemini vs Cursor)
 
 Set up all auth tokens first (see Authentication setup above), then run:
 
 ```bash
-source scripts/export_oauth_token.sh && export $(grep CODEX_API_KEY .env) && source scripts/export_gemini_oauth_token.sh
+source scripts/export_oauth_token.sh && export $(grep CODEX_API_KEY .env) && source scripts/export_gemini_oauth_token.sh && source scripts/export_cursor_api_key.sh
 
-# Run Claude, Codex, and Gemini variants — non-Claude MUST have --model override
+# Run Claude, Codex, Gemini, and Cursor variants — non-Claude MUST have --model override
 nasde run --variant claude-vanilla -C path/to/benchmark --with-opik &
 nasde run --variant codex-vanilla --model gpt-6.1-sol -C path/to/benchmark --with-opik &
 nasde run --variant gemini-vanilla --model google/gemini-3-flash-preview -C path/to/benchmark --with-opik &
+nasde run --variant cursor-vanilla --model cursor/composer-2.5 -C path/to/benchmark --with-opik &
 wait
 ```
 
@@ -284,6 +302,9 @@ When using `CLAUDE_CODE_OAUTH_TOKEN` (Claude subscription — no per-token cost)
 - **Google account OAuth** (`gemini login`): free tier via Gemini Code Assist license (1M token context). Run freely.
 - **API key** (`GEMINI_API_KEY`): billed per-token through Google AI Studio. Ask before running.
 - **Vertex AI** (`GOOGLE_API_KEY`): billed through Google Cloud. Ask before running.
+
+**Cursor variants:**
+- **API key** (`CURSOR_API_KEY`): billed against your Cursor plan; Composer models draw from the plan's included pool first. Ask before running.
 
 Task estimated times are derived from `task.toml [agent] timeout_sec` (timeout_sec / 60 is a rough upper bound; agents typically finish faster). When `--tasks` filters are used, count only selected tasks.
 

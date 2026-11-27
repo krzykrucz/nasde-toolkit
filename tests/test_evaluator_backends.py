@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from nasde_toolkit.config import EvaluationConfig
 from nasde_toolkit.evaluator_backends import EvaluatorBackend, create_backend
 from nasde_toolkit.evaluator_backends.claude_subprocess import ClaudeSubprocessBackend
 from nasde_toolkit.evaluator_backends.codex_subprocess import CodexSubprocessBackend
+from nasde_toolkit.evaluator_backends.cursor_subprocess import CursorSubprocessBackend
 
 
 def test_create_backend_returns_claude_by_default() -> None:
@@ -335,3 +337,168 @@ def test_codex_backend_env_preserves_openai_key_priority(
 
     assert env["OPENAI_API_KEY"] == "sk-explicit-openai-key"
     assert env.get("CODEX_API_KEY") == "sk-stale-codex-key"
+
+
+def test_create_backend_returns_cursor_when_configured() -> None:
+    backend = create_backend(EvaluationConfig(backend="cursor"))
+    assert isinstance(backend, CursorSubprocessBackend)
+    assert isinstance(backend, EvaluatorBackend)
+
+
+def test_cursor_backend_validate_cli_installed_fails_with_install_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("nasde_toolkit.evaluator_backends.cursor_subprocess.shutil.which", lambda _: None)
+    with pytest.raises(SystemExit):
+        CursorSubprocessBackend().validate_cli_installed()
+    out = capsys.readouterr().out
+    assert "cursor-agent" in out
+    assert "--without-eval" in out
+
+
+def test_cursor_backend_validate_auth_tolerates_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+    CursorSubprocessBackend().validate_auth()
+
+
+def test_cursor_backend_builds_read_only_command() -> None:
+    cmd = CursorSubprocessBackend()._build_command(
+        eval_config=EvaluationConfig(backend="cursor", model="cursor/claude-opus-5-5"),
+        trial_dir=None,
+    )
+    assert cmd[:2] == ["cursor-agent", "-p"]
+    assert cmd[cmd.index("--output-format") + 1] == "json"
+    assert cmd[cmd.index("--mode") + 1] == "ask"
+    assert "--trust" in cmd
+    assert cmd[cmd.index("--model") + 1] == "claude-opus-5-5"
+    assert "--max-turns" not in cmd
+    assert "--add-dir" not in cmd
+
+
+def test_cursor_backend_command_includes_add_dir_for_agent_diff(tmp_path: Path) -> None:
+    trial_dir = tmp_path / "trial"
+    trial_dir.mkdir()
+    (trial_dir / "agent_changes.diff").write_text("diff --git a/x b/x\n", encoding="utf-8")
+    cmd = CursorSubprocessBackend()._build_command(eval_config=EvaluationConfig(), trial_dir=trial_dir)
+    assert cmd[cmd.index("--add-dir") + 1] == str(trial_dir)
+
+
+def test_cursor_backend_no_context_options_runs_in_workspace(tmp_path: Path) -> None:
+    cmd, temp_dir = CursorSubprocessBackend()._build_command_with_context(
+        workspace_path=tmp_path, eval_config=EvaluationConfig(), project_root=tmp_path, trial_dir=None
+    )
+    assert temp_dir is None
+    assert "--add-dir" not in cmd
+
+
+def test_cursor_backend_context_dir_carries_skills_mcp_and_rule(tmp_path: Path) -> None:
+    skill = tmp_path / "evaluator_skills" / "my-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# Skill")
+    mcp = tmp_path / "evaluator_mcp.json"
+    mcp.write_text('{"mcpServers": {}}')
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    eval_config = EvaluationConfig(
+        skills_dir="evaluator_skills", mcp_config="evaluator_mcp.json", append_system_prompt="Be strict."
+    )
+
+    cmd, temp_dir = CursorSubprocessBackend()._build_command_with_context(
+        workspace_path=workspace, eval_config=eval_config, project_root=tmp_path, trial_dir=None
+    )
+
+    assert temp_dir is not None
+    try:
+        assert (temp_dir / ".cursor" / "skills" / "my-skill" / "SKILL.md").exists()
+        assert (temp_dir / ".cursor" / "mcp.json").read_text() == '{"mcpServers": {}}'
+        rule = (temp_dir / ".cursor" / "rules" / "nasde-judge.mdc").read_text()
+        assert "alwaysApply: true" in rule
+        assert "Be strict." in rule
+        assert "--approve-mcps" in cmd
+        assert cmd[cmd.index("--add-dir") + 1] == str(workspace)
+        assert not (workspace / ".cursor").exists()
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_cursor_backend_cleans_temp_dir_when_staging_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    staged_dir = tmp_path / "nasde_eval_staged"
+    staged_dir.mkdir()
+    monkeypatch.setattr(
+        "nasde_toolkit.evaluator_backends.cursor_subprocess.tempfile.mkdtemp", lambda prefix: str(staged_dir)
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(FileNotFoundError):
+        CursorSubprocessBackend()._build_command_with_context(
+            workspace_path=workspace,
+            eval_config=EvaluationConfig(mcp_config="missing_mcp.json"),
+            project_root=tmp_path,
+            trial_dir=None,
+        )
+
+    assert not staged_dir.exists()
+
+
+def test_cursor_backend_warns_on_allowed_tools(capsys: pytest.CaptureFixture[str]) -> None:
+    CursorSubprocessBackend()._warn_unsupported_options(EvaluationConfig(allowed_tools=["Read", "Bash"]))
+    out = capsys.readouterr().out
+    assert "allowed_tools" in out
+    assert "--mode ask" in out
+
+
+def test_cursor_backend_silent_without_allowed_tools(capsys: pytest.CaptureFixture[str]) -> None:
+    CursorSubprocessBackend()._warn_unsupported_options(EvaluationConfig(max_turns=5))
+    assert capsys.readouterr().out == ""
+
+
+def _stub_cursor_backend(monkeypatch: pytest.MonkeyPatch) -> tuple[CursorSubprocessBackend, dict]:
+    backend = CursorSubprocessBackend()
+    captured: dict = {}
+
+    async def fake_run(cmd: list[str], cwd: Path, env: dict[str, str]) -> str:
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["cwd_existed"] = cwd.exists()
+        return "{}"
+
+    monkeypatch.setattr(backend, "_run_subprocess", fake_run)
+    monkeypatch.setattr(backend, "validate_cli_installed", lambda: None)
+    monkeypatch.setattr(backend, "validate_auth", lambda: None)
+    return backend, captured
+
+
+def test_cursor_run_evaluation_with_context_uses_temp_cwd_and_cleans_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    backend, captured = _stub_cursor_backend(monkeypatch)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    config = EvaluationConfig(backend="cursor", append_system_prompt="be strict")
+
+    asyncio.run(backend.run_evaluation("the prompt", workspace, config, tmp_path))
+
+    assert captured["cwd"] != workspace
+    assert captured["cwd_existed"]
+    assert captured["cmd"][-2:] == ["--", "the prompt"]
+    assert str(workspace) in captured["cmd"]
+    assert not captured["cwd"].exists()
+
+
+def test_cursor_run_evaluation_without_context_runs_in_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    backend, captured = _stub_cursor_backend(monkeypatch)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    asyncio.run(backend.run_evaluation("the prompt", workspace, EvaluationConfig(backend="cursor"), tmp_path))
+
+    assert captured["cwd"] == workspace
+    assert captured["cmd"][-2:] == ["--", "the prompt"]

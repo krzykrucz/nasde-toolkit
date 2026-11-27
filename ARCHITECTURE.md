@@ -2,9 +2,9 @@
 
 ## Overview
 
-NASDE evaluates AI coding agents (e.g. Claude Code, OpenAI Codex, Gemini CLI) on programming tasks. It uses **Harbor** as the execution engine running agents in isolated sandbox environments and **Opik** as the observability platform for tracking results.
+NASDE evaluates AI coding agents (e.g. Claude Code, OpenAI Codex, Gemini CLI, Cursor) on programming tasks. It uses **Harbor** as the execution engine running agents in isolated sandbox environments and **Opik** as the observability platform for tracking results.
 
-Key design: evaluation is **two-stage** — Harbor assesses functional correctness (tests pass/fail), then a separate reviewer agent (the `claude` or `codex` CLI, spawned as a subprocess) assesses architectural quality of the generated code.
+Key design: evaluation is **two-stage** — Harbor assesses functional correctness (tests pass/fail), then a separate reviewer agent (the `claude`, `codex` or `cursor` CLI, spawned as a subprocess) assesses architectural quality of the generated code.
 
 ---
 
@@ -20,7 +20,7 @@ flowchart TB
 
     subgraph HARBOR ["2. Harbor — trial execution (isolated sandbox)"]
         JOB --> SANDBOX["Sandbox environment\n(Docker, Daytona, Modal, E2B, etc.)"]
-        SANDBOX --> SETUP["Configurable{Claude,Codex,Gemini}.setup()\n→ upload instruction files, skills, config"]
+        SANDBOX --> SETUP["Configurable{Claude,Codex,Gemini,Cursor}.setup()\n→ upload instruction files, skills, config"]
         SETUP --> AGENT["AI coding agent\nworks on the task"]
         AGENT --> TEST["test.sh — functional verification"]
         TEST --> REWARD["reward: 0.0 or 1.0"]
@@ -220,7 +220,7 @@ The evaluator agent is configurable via `[evaluation]` in `nasde.toml`. All opti
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `backend` | `claude` | Subprocess backend: `claude` (`ClaudeSubprocessBackend`) or `codex` (`CodexSubprocessBackend`) |
+| `backend` | `claude` | Subprocess backend: `claude` (`ClaudeSubprocessBackend`), `codex` (`CodexSubprocessBackend`) or `cursor` (`CursorSubprocessBackend`; use `model = "cursor/claude-opus-5-5"`) |
 | `model` | `claude-opus-5-5` | Evaluator model (Opus recommended for review quality) |
 | `dimensions_file` | `assessment_dimensions.json` | Path to scoring dimensions |
 | `max_turns` | `30` | Max conversation turns for evaluator |
@@ -230,10 +230,11 @@ The evaluator agent is configurable via `[evaluation]` in `nasde.toml`. All opti
 | `append_system_prompt` | — | Extra text appended to evaluator's system prompt |
 | `include_trajectory` | `false` | Include ATIF trajectory data in evaluation (opt-in) |
 
-Backends are pluggable via the `EvaluatorBackend` Protocol in `src/nasde_toolkit/evaluator_backends/protocol.py`. Both current backends spawn a CLI subprocess — not a Python SDK call — so the evaluator inherits the user's existing CLI authentication (OAuth subscription or API key). This avoids Anthropic's SDK-billing restrictions on subscription accounts: running `claude -p` under your shell is billed the same as interactive use.
+Backends are pluggable via the `EvaluatorBackend` Protocol in `src/nasde_toolkit/evaluator_backends/protocol.py`. All current backends spawn a CLI subprocess — not a Python SDK call — so the evaluator inherits the user's existing CLI authentication (OAuth subscription or API key). This avoids Anthropic's SDK-billing restrictions on subscription accounts: running `claude -p` under your shell is billed the same as interactive use.
 
 - `ClaudeSubprocessBackend` invokes `claude -p --output-format json --model <model> --allowed-tools ... [--append-system-prompt ...] [--mcp-config ...] [--add-dir ...]`. The `--bare` flag is deliberately omitted so the CLI reads OAuth tokens from the keychain and auto-discovers skills.
 - `CodexSubprocessBackend` invokes `codex exec --json --quiet --full-auto --model <model> [--sandbox ...]` and parses the JSONL event stream emitted to stdout.
+- `CursorSubprocessBackend` invokes `cursor-agent -p --output-format json --trust --mode ask --model <model>` (read-only; see [ADR-015](docs/adr/015-cursor-agent-and-judge.md)).
 
 When `include_trajectory` is set to `true`, the evaluator prompt includes a reference to the agent's ATIF trajectory file (`agent/trajectory.json`), and the trial directory is added to the backend's `--add-dir` set so the evaluator can read it. This enables assessment dimensions that evaluate the agent's process (tool usage, efficiency, decision-making) alongside the final output. The trajectory file is not preprocessed — the evaluator reads it directly via the Read tool.
 
@@ -266,6 +267,11 @@ classDiagram
         +setup(environment)
         +solve(task)
     }
+    class CursorCli {
+        <<Harbor built-in>>
+        +setup(environment)
+        +solve(task)
+    }
     class ConfigurableClaude {
         -_sandbox_files: dict~str, str~
         +setup(environment)
@@ -285,16 +291,24 @@ classDiagram
         +create_run_agent_commands(instruction) list
         +name() str
     }
+    class ConfigurableCursor {
+        -_sandbox_files: dict~str, str~
+        +setup(environment)
+        -_upload_sandbox_files(environment)
+        +name() str
+    }
     ClaudeCode <|-- ConfigurableClaude
     Codex <|-- ConfigurableCodex
     GeminiCli <|-- ConfigurableGemini
+    CursorCli <|-- ConfigurableCursor
 
     note for ConfigurableClaude "Injects CLAUDE.md, .claude/skills/ into sandbox"
     note for ConfigurableCodex "Injects AGENTS.md, .agents/skills/ into sandbox"
+    note for ConfigurableCursor "Injects AGENTS.md into sandbox; skills via native ~/.cursor/skills\nAdds per-step token/cost metrics"
     note for ConfigurableGemini "Injects GEMINI.md, .gemini/skills/ into sandbox\nAuto-injects OAuth creds from ~/.gemini/oauth_creds.json"
 ```
 
-Harbor natively handles auth, MCP servers, model selection, and timeout for all agents. `ConfigurableClaude`, `ConfigurableCodex`, and `ConfigurableGemini` each add **one thing**: declarative file mapping from host to the sandbox via `sandbox_files` in `harbor_config.json`. `ConfigurableGemini` additionally handles OAuth credential injection and DNS resolution for cloud sandboxes. The agent type is auto-detected from the variant's instruction file (`CLAUDE.md` → Claude, `AGENTS.md` → Codex, `GEMINI.md` → Gemini).
+Harbor natively handles auth, MCP servers, model selection, and timeout for all agents. `ConfigurableClaude`, `ConfigurableCodex`, `ConfigurableGemini`, and `ConfigurableCursor` each add **one thing**: declarative file mapping from host to the sandbox via `sandbox_files` in `harbor_config.json`. `ConfigurableGemini` additionally handles OAuth credential injection and DNS resolution for cloud sandboxes; `ConfigurableCursor` additionally handles the cloud DNS fix and per-step token/cost metrics for Opik. The agent type comes from `agent` in `variant.toml` (`claude`/`codex`/`gemini`/`cursor`); Codex and Cursor both use `AGENTS.md`, so it cannot be inferred from the instruction file.
 
 ---
 
@@ -303,17 +317,19 @@ Harbor natively handles auth, MCP servers, model selection, and timeout for all 
 Each benchmark defines its **own set of variants** — there are no globally shared variants. A variant represents a specific agent configuration to be compared against other variants on the same set of tasks.
 
 Each variant is a directory under `variants/<variant-name>/` containing:
-- `variant.toml` — **required**, declares the agent type (`agent = "claude"`, `agent = "codex"`, or `agent = "gemini"`)
+- `variant.toml` — **required**, declares the agent type (`agent = "claude"`, `agent = "codex"`, `agent = "gemini"`, or `agent = "cursor"`)
 - `CLAUDE.md` — Claude Code instructions injected into `/app/CLAUDE.md` (for Claude variants)
 - `AGENTS.md` — Codex instructions injected into `/app/AGENTS.md` (for Codex variants)
 - `GEMINI.md` — Gemini CLI instructions injected into `/app/GEMINI.md` (for Gemini variants)
+- Cursor variants use `AGENTS.md` (injected into `/app/AGENTS.md`)
 - `skills/` — Claude skill snapshots, each `skills/<name>/SKILL.md` injected into `/app/.claude/skills/<name>/SKILL.md` (optional)
 - `agents_skills/` — Codex skill snapshots, each `agents_skills/<name>/` injected recursively into `/app/.agents/skills/<name>/` (optional)
 - `gemini_skills/` — Gemini skill snapshots, each `gemini_skills/<name>/` injected recursively into `/app/.gemini/skills/<name>/` and `~/.gemini/skills/<name>/` (optional)
+- `cursor_skills/` — Cursor skill snapshots (`SKILL.md` with YAML frontmatter), registered through Harbor-native `config.agent.skills` into `~/.cursor/skills` (optional)
 - `harbor_config.json` — agent import path + `sandbox_files` mapping (auto-generated from `variant.toml` if absent)
 - `claude_config.json` — MCP server configuration, Claude only (optional)
 
-Variants can differ along many axes: agent type, instruction specificity, skill combinations, tool access, constraints, prompting techniques. Cross-agent comparison (e.g. Claude vs Codex vs Gemini on the same tasks) is a key use case.
+Variants can differ along many axes: agent type, instruction specificity, skill combinations, tool access, constraints, prompting techniques. Cross-agent comparison (e.g. Claude vs Codex vs Gemini vs Cursor on the same tasks) is a key use case.
 
 ---
 
@@ -443,10 +459,12 @@ src/nasde_toolkit/
     protocol.py            # EvaluatorBackend Protocol + factory
     claude_subprocess.py   # `claude -p --output-format json` backend (default)
     codex_subprocess.py    # `codex exec --json --quiet --full-auto` backend
+    cursor_subprocess.py   # `cursor-agent -p --mode ask` backend
   docker.py                # Docker environment helpers
   scaffold/                # Project scaffolding templates
   agents/
     configurable_claude.py # Harbor-compatible Claude Code agent with sandbox file injection
     configurable_codex.py  # Harbor-compatible Codex agent with sandbox file injection
     configurable_gemini.py # Harbor-compatible Gemini CLI agent with sandbox file injection + OAuth
+    configurable_cursor.py # Harbor-compatible Cursor CLI agent with sandbox file injection + per-step metrics
 ```

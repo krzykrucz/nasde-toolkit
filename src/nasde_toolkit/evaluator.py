@@ -123,6 +123,7 @@ class AssessmentSummary:
     token_usage: dict | None = None
     cost_usd: float | None = None
     pricing_as_of: str | None = None
+    cost_source: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +307,7 @@ async def evaluate_trial(
     agent_diff_path, agent_diffstat = _materialize_agent_diff(workspace_path, trial_dir)
 
     trajectory_path = _resolve_trajectory_path(trial_dir, eval_config)
-    artifacts_dir = str(workspace_path) if eval_config.skills_dir else None
+    artifacts_dir = str(workspace_path)
     prompt = _build_evaluator_prompt(
         instruction,
         criteria,
@@ -341,7 +342,7 @@ async def evaluate_trial(
     evaluation.agent_name = agent_name
     evaluation.harbor_reward = harbor_reward
     evaluation.duration_sec = duration_sec
-    evaluation.evaluator_model = eval_config.model
+    evaluation.evaluator_model = _judge_model_label(eval_config)
     evaluation.timestamp = datetime.now(UTC).isoformat()
     evaluation.dimensions_fingerprint = _dimensions_fingerprint(dimensions_path)
     _apply_precheck(evaluation, precheck_raw)
@@ -496,6 +497,12 @@ def _load_expected_dimensions(dimensions_path: Path) -> list[dict] | None:
     dims: list[dict] | None = data.get("dimensions", [])
     _validate_expected_dimensions(dims, dimensions_path)
     return dims
+
+
+def _judge_model_label(eval_config: EvaluationConfig) -> str:
+    if eval_config.backend == "cursor" and not eval_config.model.startswith("cursor/"):
+        return f"cursor/{eval_config.model}"
+    return eval_config.model
 
 
 def _dimensions_fingerprint(dimensions_path: Path) -> str:
@@ -899,6 +906,7 @@ def _enrich_with_economics(summary: AssessmentSummary, trial_dir: Path, pricing:
     summary.token_usage = economics["token_usage"]
     summary.cost_usd = economics["cost_usd"]
     summary.pricing_as_of = economics["pricing_as_of"]
+    summary.cost_source = economics["cost_source"]
 
 
 def _resolve_model_name(trial_dir: Path) -> str:

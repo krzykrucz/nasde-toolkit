@@ -204,6 +204,7 @@ def _build_metrics(trial_dir: Path, pricing: dict[str, ModelPrice]) -> dict:
         "token_usage": economics["token_usage"],
         "cost_usd": economics["cost_usd"],
         "pricing_as_of": economics["pricing_as_of"],
+        "cost_source": economics["cost_source"],
         "exception_info": result.get("exception_info"),
     }
 

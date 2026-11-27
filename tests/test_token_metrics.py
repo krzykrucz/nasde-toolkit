@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nasde_toolkit.pricing import load_pricing
+from nasde_toolkit.pricing import ModelPrice, load_pricing
 from nasde_toolkit.token_metrics import (
     build_trial_economics,
     dominant_normalized_score,
@@ -128,3 +128,77 @@ def test_build_trial_economics_has_no_scalar_efficiency_keys(tmp_path: Path) -> 
     econ = build_trial_economics(tmp_path, "gpt-6.1-sol", load_pricing())
     assert "token_efficiency" not in econ  # removed: arbitrary zero → use Pareto front
     assert "cost_efficiency" not in econ
+
+
+CURSOR_TRAJ = {
+    "final_metrics": {
+        "total_prompt_tokens": 1_000_000,
+        "total_completion_tokens": 20_000,
+        "total_cached_tokens": 900_000,
+        "total_cost_usd": 0.42,
+        "extra": {
+            "usage_totals": {
+                "inputTokens": 60_000,
+                "outputTokens": 20_000,
+                "cacheReadTokens": 900_000,
+                "cacheWriteTokens": 40_000,
+            },
+            "cost_source": "litellm",
+        },
+    }
+}
+
+COMPOSER_PRICE = ModelPrice(input_per_1m=0.5, output_per_1m=2.5, cached_input_per_1m=0.2, as_of="2026-11-23")
+
+
+def _write_traj(trial_dir: Path, traj: dict) -> None:
+    (trial_dir / "agent").mkdir()
+    (trial_dir / "agent" / "trajectory.json").write_text(json.dumps(traj))
+
+
+def test_extract_cursor_reads_cache_writes_from_usage_totals() -> None:
+    usage = extract_token_usage(CURSOR_TRAJ)
+    assert usage is not None
+    assert usage.cache_write_tokens == 40_000
+    assert usage.cached_tokens == 900_000
+
+
+def test_build_trial_economics_catalog_priced_has_pricing_toml_source(tmp_path: Path) -> None:
+    _write_traj(tmp_path, CODEX_TRAJ)
+    econ = build_trial_economics(tmp_path, "gpt-6.1-sol", load_pricing())
+    assert econ["cost_source"] == "pricing.toml"
+
+
+def test_build_trial_economics_cursor_catalog_price_wins_over_harbor(tmp_path: Path) -> None:
+    _write_traj(tmp_path, CURSOR_TRAJ)
+    econ = build_trial_economics(tmp_path, "cursor/composer-2.5", {"cursor/composer-2.5": COMPOSER_PRICE})
+    fresh = 1_000_000 - 900_000 - 40_000
+    expected = fresh / 1e6 * 0.5 + 40_000 / 1e6 * 0.5 + 900_000 / 1e6 * 0.2 + 20_000 / 1e6 * 2.5
+    assert econ["cost_usd"] == pytest.approx(expected)
+    assert econ["cost_source"] == "pricing.toml"
+    assert econ["pricing_as_of"] == "2026-11-23"
+
+
+def test_build_trial_economics_unpriced_cursor_falls_back_to_harbor(tmp_path: Path) -> None:
+    _write_traj(tmp_path, CURSOR_TRAJ)
+    econ = build_trial_economics(tmp_path, "cursor/some-new-model", {})
+    assert econ["cost_usd"] == pytest.approx(0.42)
+    assert econ["cost_source"] == "harbor:litellm"
+    assert econ["pricing_as_of"] is None
+    assert econ["token_usage"]["cache_write_tokens"] == 40_000
+
+
+def test_build_trial_economics_unpriced_cursor_without_harbor_cost_is_none(tmp_path: Path) -> None:
+    traj = json.loads(json.dumps(CURSOR_TRAJ))
+    del traj["final_metrics"]["total_cost_usd"]
+    _write_traj(tmp_path, traj)
+    econ = build_trial_economics(tmp_path, "cursor/some-new-model", {})
+    assert econ["cost_usd"] is None
+    assert econ["cost_source"] is None
+
+
+def test_build_trial_economics_unpriced_non_cursor_ignores_harbor_cost(tmp_path: Path) -> None:
+    _write_traj(tmp_path, CURSOR_TRAJ)
+    econ = build_trial_economics(tmp_path, "claude-haiku-5-5", {})
+    assert econ["cost_usd"] is None
+    assert econ["cost_source"] is None
