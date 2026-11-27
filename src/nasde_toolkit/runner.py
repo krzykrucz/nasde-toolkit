@@ -1175,6 +1175,7 @@ def _print_job_summary(result: JobResult, job_dir: Path | None = None, project_d
         if rows:
             _print_economics_table(rows)
             _print_label_legend(rows)
+            _print_harbor_estimate_note(rows)
             _print_pricing_used(rows, project_dir)
             _print_location_hints(job_dir)
         elif result.stats.evals:
@@ -1224,7 +1225,7 @@ def _print_economics_table(rows: list[dict]) -> None:
             str(row["trials"]),
             _fmt_score(row["score"], row["score_std"], row["trials"]),
             _fmt_tokens(row["tokens"], row["tokens_std"]),
-            _fmt_cost(row["cost"], row["cost_std"]),
+            _fmt_cost(row["cost"], row["cost_std"]) + ("*" if row["harbor_estimated"] else ""),
         )
     console.print(table)
 
@@ -1235,6 +1236,15 @@ def _print_label_legend(rows: list[dict]) -> None:
     console.print("[dim]Legend:[/dim]")
     for index, row in enumerate(rows, start=1):
         console.print(f"[dim]  [{index}] {row['full_label']}[/dim]")
+
+
+def _print_harbor_estimate_note(rows: list[dict]) -> None:
+    if not any(row["harbor_estimated"] for row in rows):
+        return
+    console.print(
+        "[dim]* Cost is Harbor's estimate (model not in pricing.toml); "
+        "add it to pricing.toml for catalog pricing. Per-trial source: cost_source.[/dim]"
+    )
 
 
 def _print_location_hints(job_dir: Path) -> None:
@@ -1270,7 +1280,7 @@ def _collect_economics_rows(job_dir: Path) -> list[dict]:
 
 def _accumulate_economics(groups: dict[tuple[str, str, str], dict], summary: dict) -> None:
     key = (summary.get("agent_name", ""), summary.get("model_name", ""), summary.get("reasoning_effort", ""))
-    agg = groups.setdefault(key, {"trials": 0, "scores": [], "tokens": [], "costs": []})
+    agg = groups.setdefault(key, {"trials": 0, "scores": [], "tokens": [], "costs": [], "harbor_estimated": False})
     agg["trials"] += 1
     score = dominant_normalized_score(summary.get("groups", []))
     if score is not None:
@@ -1280,6 +1290,8 @@ def _accumulate_economics(groups: dict[tuple[str, str, str], dict], summary: dic
         agg["tokens"].append(usage.get("total_tokens", 0))
     if summary.get("cost_usd") is not None:
         agg["costs"].append(summary["cost_usd"])
+    if (summary.get("cost_source") or "").startswith("harbor:"):
+        agg["harbor_estimated"] = True
 
 
 def _finalize_economics_row(label: tuple[str, str, str], agg: dict) -> dict:
@@ -1296,6 +1308,7 @@ def _finalize_economics_row(label: tuple[str, str, str], agg: dict) -> dict:
         "tokens_std": _sample_std(agg["tokens"]),
         "cost": _mean(agg["costs"]),
         "cost_std": _sample_std(agg["costs"]),
+        "harbor_estimated": agg["harbor_estimated"],
     }
 
 

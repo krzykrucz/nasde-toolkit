@@ -28,6 +28,7 @@ def _write_trial(
     tokens: int,
     cost: float,
     effort: str = "",
+    cost_source: str | None = None,
 ) -> None:
     trial = job / name
     trial.mkdir(parents=True)
@@ -43,6 +44,7 @@ def _write_trial(
                 "groups": [{"dominant": True, "normalized_score_mean": score}],
                 "token_usage": {"total_tokens": tokens},
                 "cost_usd": cost,
+                "cost_source": cost_source,
             }
         )
     )
@@ -245,3 +247,42 @@ def test_economics_row_carries_model_name(tmp_path: Path) -> None:
 
     rows = _collect_economics_rows(job)
     assert {row["model"] for row in rows} == {"gpt-6.1-sol", "claude-sonnet-5-5"}
+
+
+def test_economics_row_flags_harbor_estimated_cost(tmp_path: Path) -> None:
+    job = tmp_path / "job"
+    _write_trial(job, "t__a", "cursor-vanilla", "cursor/new-model", 0.7, 1000, 1.0, cost_source="harbor:litellm")
+    _write_trial(job, "t__b", "cursor-vanilla", "cursor/composer-2.5", 0.7, 1000, 1.0, cost_source="pricing.toml")
+    _write_trial(job, "t__c", "claude-vanilla", "claude-sonnet-5-5", 0.7, 1000, 1.0)
+
+    flags = {row["model"]: row["harbor_estimated"] for row in _collect_economics_rows(job)}
+    assert flags == {"cursor/new-model": True, "cursor/composer-2.5": False, "claude-sonnet-5-5": False}
+
+
+def test_print_job_summary_marks_harbor_estimated_cost(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wide_console(monkeypatch)
+    job = tmp_path / "job"
+    _write_trial(job, "t__a", "cursor-vanilla", "cursor/new-model", 0.7, 1000, 1.5, cost_source="harbor:litellm")
+
+    _print_job_summary(_job_result(n_completed=1), job)
+
+    out = _flat(capsys.readouterr().out)
+    assert "$1.50*" in out
+    assert "Harbor's estimate" in out
+
+
+def test_print_job_summary_has_no_estimate_marker_for_catalog_cost(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wide_console(monkeypatch)
+    job = tmp_path / "job"
+    _write_trial(job, "t__a", "claude-vanilla", "claude-sonnet-5-5", 0.7, 1000, 1.5, cost_source="pricing.toml")
+
+    _print_job_summary(_job_result(n_completed=1), job)
+
+    out = _flat(capsys.readouterr().out)
+    assert "$1.50" in out
+    assert "$1.50*" not in out
+    assert "Harbor's estimate" not in out

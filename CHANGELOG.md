@@ -21,7 +21,8 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   per-step tokens and cost. Bundled prices for `cursor/composer-2.5`,
   `cursor/claude-opus-5-5` and `cursor/claude-sonnet-5-5` (list rates, no
   Teams surcharge); other `cursor/*` models fall back to Harbor's estimate.
-  Every trial's economics gain `cost_source`. See ADR-015. ([#13])
+  Every trial's economics gain `cost_source`, and the `nasde run` cost table
+  marks Harbor-estimated costs with `*`. See ADR-015. ([#13])
 
 ### Changed
 - **Bundled Codex examples run on `gpt-6.1-sol`.** Every Codex variant in the
