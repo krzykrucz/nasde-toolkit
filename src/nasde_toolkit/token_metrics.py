@@ -28,6 +28,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 
 from nasde_toolkit.pricing import ModelPrice, compute_cost_usd, pricing_as_of
 
@@ -139,9 +140,9 @@ def _harbor_estimated_economics(model: str, usage: TokenUsage, trajectory: dict)
     cost_usd = final_metrics.get("total_cost_usd")
     harbor_source = (final_metrics.get("extra") or {}).get("cost_source", "unknown")
     cost_source = f"harbor:{harbor_source}" if cost_usd is not None else None
+    outcome = f"using Harbor estimate ({escape(cost_source)})" if cost_source else "cost left unset"
     console.print(
-        f"  [yellow]No pricing for model {model!r} in pricing.toml — "
-        f"{'using Harbor estimate (' + cost_source + ')' if cost_source else 'cost left unset'}. "
+        f"  [yellow]No pricing for model {escape(repr(model))} in pricing.toml — {outcome}. "
         f"Add it to pricing.toml for catalog-priced cost.[/yellow]"
     )
     return {
