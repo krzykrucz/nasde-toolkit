@@ -17,10 +17,10 @@ ConfigurableClaude uploads to ``/app/.claude/skills`` (Claude's cwd discovery
 root). The plugin path additionally calls :func:`inject_mcp_server` to register
 the plugin's MCP server in the task's Harbor config.
 
-For **Codex/Gemini** the same skill *directories* are resolved by
+For **Codex/Gemini/Cursor** the same skill *directories* are resolved by
 :func:`collect_referenced_skill_dirs` / :func:`collect_plugin_skill_dirs` and
 fed to Harbor's native ``config.agent.skills`` instead — those CLIs scan only a
-HOME-scoped dir (``$HOME/.agents/skills``, ``~/.gemini/skills``), never the
+HOME-scoped dir (``$HOME/.agents/skills``, ``~/.gemini/skills``, ``~/.cursor/skills``), never the
 ``/app`` cwd the sandbox map targets. See ADR-012.
 """
 
@@ -134,7 +134,7 @@ def collect_referenced_skill_dirs(
     Same resolution as :func:`stage_referenced_skills` (each entry's ``path``
     relative to the variant dir, optional ``ref`` read from a temporary git
     worktree) but returns the resolved *directories* instead of flattening them
-    into a ``sandbox_files`` map under ``/app/.claude/skills``. Codex and Gemini
+    into a ``sandbox_files`` map under ``/app/.claude/skills``. Codex, Gemini and Cursor
     auto-discover skills only from a HOME-scoped dir, never from the agent's
     ``/app`` cwd, so they take this dir list through Harbor's native
     ``config.agent.skills`` mechanism. Claude keeps using
@@ -158,7 +158,7 @@ def collect_plugin_skill_dirs(staged: StagedPlugin) -> list[Path]:
     """Resolve a shipped plugin's own ``skills/`` to a list of skill dirs.
 
     The dir-list counterpart of :func:`register_plugin_skills`, for the same
-    reason as :func:`collect_referenced_skill_dirs`: Codex/Gemini take these
+    reason as :func:`collect_referenced_skill_dirs`: Codex/Gemini/Cursor take these
     dirs through Harbor's native ``config.agent.skills`` rather than a
     cwd ``sandbox_files`` mapping. Paths are ``resolve()``d for the same
     string-equality reason as :func:`collect_referenced_skill_dirs`.

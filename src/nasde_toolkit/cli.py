@@ -85,8 +85,8 @@ def _override_eval_repetitions(config: ProjectConfig, eval_repetitions: int | No
 def _override_eval_judge(config: ProjectConfig, model: str | None, backend: str | None) -> None:
     """Apply per-run judge overrides (judge-model comparison matrices)."""
     if backend is not None:
-        if backend not in ("claude", "codex"):
-            console.print(f"[red]ERROR: --eval-backend must be 'claude' or 'codex', got '{backend}'.[/red]")
+        if backend not in ("claude", "codex", "cursor"):
+            console.print(f"[red]ERROR: --eval-backend must be 'claude', 'codex' or 'cursor', got '{backend}'.[/red]")
             raise typer.Exit(1)
         config.evaluation.backend = backend
     if model is not None:
@@ -198,7 +198,7 @@ def run(
         "--effort",
         help="Reasoning-effort override, passed straight to the agent (the agent validates it). "
         "Typical levels — claude: low/medium/high/xhigh/max; codex: none/minimal/low/medium/high/xhigh; "
-        "gemini: minimal/low/medium/high. "
+        "gemini: minimal/low/medium/high; cursor: low/medium/high/xhigh/max. "
         "Default: variant.toml reasoning_effort, else Harbor family default.",
     ),
     timeout: int | None = typer.Option(
@@ -388,7 +388,7 @@ def eval_command(
     eval_backend: str | None = typer.Option(
         None,
         "--eval-backend",
-        help="Override the judge backend for this run: claude | codex.",
+        help="Override the judge backend for this run: claude | codex | cursor.",
     ),
     project_dir: Path = typer.Option(
         Path("."),
@@ -767,7 +767,7 @@ def _print_run_header(
     env_str = harbor_env or "docker"
     attempts_str = f"{attempts}" if attempts > 1 else "1"
     timeout_str = f"{timeout}s (override)" if timeout is not None else "per task.toml"
-    agent_labels = {"codex": "Codex (OpenAI)", "gemini": "Gemini CLI (Google)"}
+    agent_labels = {"codex": "Codex (OpenAI)", "gemini": "Gemini CLI (Google)", "cursor": "Cursor CLI"}
     agent_label = agent_labels.get(agent_type, "Claude Code")
     effort_str = effort or "family default"
     console.print(

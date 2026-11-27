@@ -257,7 +257,7 @@ Each variant is a directory under `variants/<variant-name>/` with a required `va
 ### variant.toml (required)
 
 ```toml
-agent = "claude"   # or "codex" or "gemini"
+agent = "claude"   # or "codex", "gemini" or "cursor"
 ```
 
 For Codex variants, **always** set the model explicitly to avoid inheriting the Claude model from `nasde.toml`:
@@ -288,6 +288,16 @@ model = "google/gemini-3-flash-preview"   # Required format: google/<model-name>
 - `google/gemini-3.1-pro-preview` — advanced thinking model, best for deep reasoning
 - `google/gemini-3-flash-preview` — best quality/speed ratio, daily coding tasks
 - `google/gemini-3.1-flash-lite-preview` — fastest, simple and repetitive tasks
+
+For Cursor CLI variants, **always** set the model with the `cursor/` prefix and the base slug (set effort with `reasoning_effort`, not an effort-suffixed slug):
+
+```toml
+agent = "cursor"
+model = "cursor/composer-2.5"   # Required format: cursor/<model-name>
+reasoning_effort = "high"       # Optional: low | medium | high | xhigh | max
+```
+
+**Cursor models** with bundled prices: `cursor/composer-2.5`, `cursor/claude-opus-5-5`, `cursor/claude-sonnet-5-5` (other `cursor/*` models run, but cost falls back to Harbor's estimate). Cursor variants need `CURSOR_API_KEY`.
 
 ### Scoping a variant to specific tasks (optional)
 
@@ -335,11 +345,24 @@ variants/gemini-baseline/
       SKILL.md       # MUST start with --- YAML frontmatter (name + description)
 ```
 
-> **Codex/Gemini skills are registered natively** (Harbor `config.agent.skills`),
+### Cursor CLI variant
+
+```
+variants/cursor-baseline/
+  variant.toml       # agent = "cursor", model = "cursor/composer-2.5"
+  AGENTS.md          # Instructions (injected to /app/AGENTS.md)
+  cursor_skills/     # Optional: skill snapshots (native injection -> ~/.cursor/skills/)
+    my-skill/
+      SKILL.md       # MUST start with --- YAML frontmatter (name + description)
+```
+
+`AGENTS.md` is shared with Codex, so a Cursor variant must declare `agent = "cursor"` in `variant.toml`.
+
+> **Codex/Gemini/Cursor skills are registered natively** (Harbor `config.agent.skills`),
 > not via `sandbox_files` — these CLIs auto-discover skills only from a
-> HOME-scoped dir, never from a `/app` cwd dir. This applies to **all** ways a
-> skill is supplied to a Codex/Gemini variant: the `agents_skills/` /
-> `gemini_skills/` snapshot above, a `[[skill]]` by-reference entry in
+> HOME-scoped dir (Cursor: `~/.cursor/skills`), never from a `/app` cwd dir. This applies to **all** ways a
+> skill is supplied to a Codex/Gemini/Cursor variant: the `agents_skills/` /
+> `gemini_skills/` / `cursor_skills/` snapshot above, a `[[skill]]` by-reference entry in
 > `variant.toml`, and a `[nasde.plugin]`'s own `skills/`. Each `SKILL.md`
 > **must start with a `---` YAML frontmatter line**: Codex's loader rejects a
 > file that opens with anything else (`missing YAML frontmatter delimited by
@@ -375,7 +398,7 @@ Design variants to test specific hypotheses:
 - **Guided** — detailed domain-specific guidance, patterns to follow
 - **Skill-augmented** — skills injected for domain expertise (e.g., tactical DDD)
 - **Tool-augmented** — MCP server access (e.g., codebase search)
-- **Cross-agent** — same instructions for Claude, Codex, and Gemini to compare agent performance
+- **Cross-agent** — same instructions for Claude, Codex, Gemini, and Cursor to compare agent performance
 
 Every benchmark needs at least one variant (typically `vanilla` or `baseline`).
 
