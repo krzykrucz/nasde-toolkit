@@ -362,7 +362,7 @@ def test_cursor_backend_validate_auth_tolerates_missing_key(monkeypatch: pytest.
     CursorSubprocessBackend().validate_auth()
 
 
-def test_cursor_backend_builds_read_only_command(tmp_path: Path) -> None:
+def test_cursor_backend_builds_read_only_command() -> None:
     cmd = CursorSubprocessBackend()._build_command(
         eval_config=EvaluationConfig(backend="cursor", model="cursor/claude-opus-5-5"),
         trial_dir=None,
@@ -409,16 +409,37 @@ def test_cursor_backend_context_dir_carries_skills_mcp_and_rule(tmp_path: Path) 
     )
 
     assert temp_dir is not None
-    assert (temp_dir / ".cursor" / "skills" / "my-skill" / "SKILL.md").exists()
-    assert (temp_dir / ".cursor" / "mcp.json").read_text() == '{"mcpServers": {}}'
-    rule = (temp_dir / ".cursor" / "rules" / "nasde-judge.mdc").read_text()
-    assert "alwaysApply: true" in rule
-    assert "Be strict." in rule
-    assert "--approve-mcps" in cmd
-    assert cmd[cmd.index("--add-dir") + 1] == str(workspace)
-    assert not (workspace / ".cursor").exists()
+    try:
+        assert (temp_dir / ".cursor" / "skills" / "my-skill" / "SKILL.md").exists()
+        assert (temp_dir / ".cursor" / "mcp.json").read_text() == '{"mcpServers": {}}'
+        rule = (temp_dir / ".cursor" / "rules" / "nasde-judge.mdc").read_text()
+        assert "alwaysApply: true" in rule
+        assert "Be strict." in rule
+        assert "--approve-mcps" in cmd
+        assert cmd[cmd.index("--add-dir") + 1] == str(workspace)
+        assert not (workspace / ".cursor").exists()
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
-    shutil.rmtree(temp_dir, ignore_errors=True)
+
+def test_cursor_backend_cleans_temp_dir_when_staging_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    staged_dir = tmp_path / "nasde_eval_staged"
+    staged_dir.mkdir()
+    monkeypatch.setattr(
+        "nasde_toolkit.evaluator_backends.cursor_subprocess.tempfile.mkdtemp", lambda prefix: str(staged_dir)
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(FileNotFoundError):
+        CursorSubprocessBackend()._build_command_with_context(
+            workspace_path=workspace,
+            eval_config=EvaluationConfig(mcp_config="missing_mcp.json"),
+            project_root=tmp_path,
+            trial_dir=None,
+        )
+
+    assert not staged_dir.exists()
 
 
 def test_cursor_backend_warns_on_allowed_tools(capsys: pytest.CaptureFixture[str]) -> None:

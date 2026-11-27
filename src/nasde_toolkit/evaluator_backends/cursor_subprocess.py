@@ -99,10 +99,14 @@ class CursorSubprocessBackend:
         temp_dir = Path(tempfile.mkdtemp(prefix="nasde_eval_"))
         cursor_dir = temp_dir / ".cursor"
         cursor_dir.mkdir()
-        _stage_skills(eval_config, project_root, cursor_dir)
-        if _stage_mcp_config(eval_config, project_root, cursor_dir):
-            cmd.append("--approve-mcps")
-        _stage_system_prompt_rule(eval_config, cursor_dir)
+        try:
+            _stage_skills(eval_config, project_root, cursor_dir)
+            if _stage_mcp_config(eval_config, project_root, cursor_dir):
+                cmd.append("--approve-mcps")
+            _stage_system_prompt_rule(eval_config, cursor_dir)
+        except BaseException:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
         cmd.extend(["--add-dir", str(workspace_path)])
         return cmd, temp_dir
 
