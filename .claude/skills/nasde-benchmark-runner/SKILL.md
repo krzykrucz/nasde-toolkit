@@ -23,7 +23,7 @@ Before running any benchmark, set up authentication tokens for the agents you pl
 
 **Always ask the user before running, never assume.** Two questions:
 
-1. **Which agents will you run?** (Claude / Codex / Gemini, any combination)
+1. **Which agents will you run?** (Claude / Codex / Gemini / Cursor, any combination)
 2. **For each agent, OAuth (subscription) or API key (per-token billing)?** Default recommendation: OAuth where available — no per-token cost, no env vars to manage.
 
 Then detect their OS and pick the matching script row from the table below. On Windows, also ask whether they're in **PowerShell** or **WSL** (cmd.exe is not directly supported — see "Windows: cmd.exe" below).
@@ -65,6 +65,10 @@ The script exports `CLAUDE_CODE_OAUTH_TOKEN`. This is required for both Claude v
 | Windows WSL (Ubuntu) | `codex login` once, then `source <SKILL_SCRIPTS>/export_codex_oauth_token.sh` | `export CODEX_API_KEY=sk-proj-...` |
 
 The OAuth scripts only **validate** `~/.codex/auth.json` (or `%USERPROFILE%\.codex\auth.json`) — `nasde` then opts Harbor into uploading it into the sandbox (it sets `CODEX_FORCE_AUTH_JSON=true` when no API key is present but the file exists; harbor 0.13's Codex agent otherwise defaults to `OPENAI_API_KEY` and would write an empty key). API key always takes priority over OAuth when both are present.
+
+#### Cursor CLI
+
+Cursor authenticates only with an API key: `export CURSOR_API_KEY=...` (or put it in the project `.env`), or `source <SKILL_SCRIPTS>/export_cursor_api_key.sh`. Use `agent = "cursor"` with a `cursor/` model (e.g. `cursor/composer-2.5`) and `AGENTS.md` for instructions. A Cursor agent run with the default Claude judge needs Claude auth as well; `[evaluation] backend = "cursor"` (or `--eval-backend cursor`) judges with `cursor-agent` instead.
 
 #### Gemini CLI
 
@@ -239,7 +243,7 @@ agent = "gemini"
 model = "google/gemini-3-flash-preview"
 ```
 
-### Cross-agent comparison (Claude vs Codex vs Gemini)
+### Cross-agent comparison (Claude vs Codex vs Gemini vs Cursor)
 
 Set up all auth tokens first (see Authentication setup above), then run:
 
