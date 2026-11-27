@@ -21,7 +21,7 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
   per-step tokens and cost. Bundled prices for `cursor/composer-2.5`,
   `cursor/claude-opus-5-5` and `cursor/claude-sonnet-5-5` (list rates, no
   Teams surcharge); other `cursor/*` models fall back to Harbor's estimate.
-  Every trial's economics gain `cost_source`. See ADR-015. ([#NN])
+  Every trial's economics gain `cost_source`. See ADR-015. ([#13])
 
 ### Changed
 - **Bundled Codex examples run on `gpt-6.1-sol`.** Every Codex variant in the
@@ -751,5 +751,5 @@ Initial release under the **nasde-toolkit** name (rebrand from
 [#88]: https://github.com/NoesisVision/nasde-toolkit/pull/88
 [#89]: https://github.com/NoesisVision/nasde-toolkit/pull/89
 [#90]: https://github.com/NoesisVision/nasde-toolkit/pull/90
-[#NN]: https://github.com/NoesisVision/nasde-toolkit/pull/NN
+[#13]: https://github.com/krzykrucz/nasde-toolkit/pull/13
 [gh-litellm-2026-04]: https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862
