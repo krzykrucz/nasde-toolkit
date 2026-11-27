@@ -346,11 +346,11 @@ variants/cursor-baseline/
   cursor_skills/     # Optional: skill snapshots (native injection -> ~/.cursor/skills/, SKILL.md needs --- YAML frontmatter)
 ```
 
-> **Codex/Gemini skills are registered natively** (Harbor `config.agent.skills`),
+> **Codex/Gemini/Cursor skills are registered natively** (Harbor `config.agent.skills`),
 > not via `sandbox_files` — these CLIs auto-discover skills only from a
 > HOME-scoped dir, never from a `/app` cwd dir. This applies to **all** ways a
-> skill is supplied to a Codex/Gemini variant: the `agents_skills/` /
-> `gemini_skills/` snapshot above, a `[[skill]]` by-reference entry in
+> skill is supplied to a Codex/Gemini/Cursor variant: the `agents_skills/` /
+> `gemini_skills/` / `cursor_skills/` (→ `~/.cursor/skills`) snapshot above, a `[[skill]]` by-reference entry in
 > `variant.toml`, and a `[nasde.plugin]`'s own `skills/`. Each `SKILL.md`
 > **must start with a `---` YAML frontmatter line**: Codex's loader rejects a
 > file that opens with anything else (`missing YAML frontmatter delimited by
