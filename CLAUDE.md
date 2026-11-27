@@ -343,7 +343,7 @@ dir (incl. `references/`) from a source path — no copy under
 `variants/<v>/skills/`. Optional `ref` reads from a temp git worktree at that
 commit. **Routing is agent-aware** (ADR-012): for **Claude** the dir is staged
 into `/app/.claude/skills/<name>/` via `plugin_registration.stage_skill_dir`
-(same machinery as `[nasde.plugin]`); for **Codex/Gemini** the dir is resolved
+(same machinery as `[nasde.plugin]`); for **Codex/Gemini/Cursor** the dir is resolved
 by `collect_referenced_skill_dirs` and routed through Harbor's native
 `config.agent.skills` (→ `$HOME/.agents/skills`, `~/.gemini/skills`, `~/.cursor/skills`), because
 those CLIs never scan the `/app` cwd. The legacy `variants/<v>/skills/<name>/`
