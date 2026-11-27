@@ -85,8 +85,8 @@ def _override_eval_repetitions(config: ProjectConfig, eval_repetitions: int | No
 def _override_eval_judge(config: ProjectConfig, model: str | None, backend: str | None) -> None:
     """Apply per-run judge overrides (judge-model comparison matrices)."""
     if backend is not None:
-        if backend not in ("claude", "codex"):
-            console.print(f"[red]ERROR: --eval-backend must be 'claude' or 'codex', got '{backend}'.[/red]")
+        if backend not in ("claude", "codex", "cursor"):
+            console.print(f"[red]ERROR: --eval-backend must be 'claude', 'codex' or 'cursor', got '{backend}'.[/red]")
             raise typer.Exit(1)
         config.evaluation.backend = backend
     if model is not None:
@@ -388,7 +388,7 @@ def eval_command(
     eval_backend: str | None = typer.Option(
         None,
         "--eval-backend",
-        help="Override the judge backend for this run: claude | codex.",
+        help="Override the judge backend for this run: claude | codex | cursor.",
     ),
     project_dir: Path = typer.Option(
         Path("."),
