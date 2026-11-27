@@ -220,7 +220,7 @@ The evaluator agent is configurable via `[evaluation]` in `nasde.toml`. All opti
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `backend` | `claude` | Subprocess backend: `claude` (`ClaudeSubprocessBackend`) or `codex` (`CodexSubprocessBackend`) |
+| `backend` | `claude` | Subprocess backend: `claude` (`ClaudeSubprocessBackend`), `codex` (`CodexSubprocessBackend`) or `cursor` (`CursorSubprocessBackend`; use `model = "cursor/claude-opus-5-5"`) |
 | `model` | `claude-opus-5-5` | Evaluator model (Opus recommended for review quality) |
 | `dimensions_file` | `assessment_dimensions.json` | Path to scoring dimensions |
 | `max_turns` | `30` | Max conversation turns for evaluator |
@@ -308,7 +308,7 @@ classDiagram
     note for ConfigurableGemini "Injects GEMINI.md, .gemini/skills/ into sandbox\nAuto-injects OAuth creds from ~/.gemini/oauth_creds.json"
 ```
 
-Harbor natively handles auth, MCP servers, model selection, and timeout for all agents. `ConfigurableClaude`, `ConfigurableCodex`, `ConfigurableGemini`, and `ConfigurableCursor` each add **one thing**: declarative file mapping from host to the sandbox via `sandbox_files` in `harbor_config.json`. `ConfigurableGemini` additionally handles OAuth credential injection and DNS resolution for cloud sandboxes. The agent type comes from `agent` in `variant.toml` (`claude`/`codex`/`gemini`/`cursor`); Codex and Cursor both use `AGENTS.md`, so it cannot be inferred from the instruction file.
+Harbor natively handles auth, MCP servers, model selection, and timeout for all agents. `ConfigurableClaude`, `ConfigurableCodex`, `ConfigurableGemini`, and `ConfigurableCursor` each add **one thing**: declarative file mapping from host to the sandbox via `sandbox_files` in `harbor_config.json`. `ConfigurableGemini` additionally handles OAuth credential injection and DNS resolution for cloud sandboxes; `ConfigurableCursor` additionally handles the cloud DNS fix and per-step token/cost metrics for Opik. The agent type comes from `agent` in `variant.toml` (`claude`/`codex`/`gemini`/`cursor`); Codex and Cursor both use `AGENTS.md`, so it cannot be inferred from the instruction file.
 
 ---
 

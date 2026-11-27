@@ -68,7 +68,7 @@ The OAuth scripts only **validate** `~/.codex/auth.json` (or `%USERPROFILE%\.cod
 
 #### Cursor CLI
 
-Cursor authenticates only with an API key: `export CURSOR_API_KEY=...` (or put it in the project `.env`), or `source <SKILL_SCRIPTS>/export_cursor_api_key.sh`. Use `agent = "cursor"` with a `cursor/` model (e.g. `cursor/composer-2.5`) and `AGENTS.md` for instructions. A Cursor agent run with the default Claude judge needs Claude auth as well; `[evaluation] backend = "cursor"` (or `--eval-backend cursor`) judges with `cursor-agent` instead.
+Cursor authenticates only with an API key: `export CURSOR_API_KEY=...` (or put it in the project `.env`), or `source <SKILL_SCRIPTS>/export_cursor_api_key.sh`. Use `agent = "cursor"` with a `cursor/` model (e.g. `cursor/composer-2.5`) and `AGENTS.md` for instructions. A Cursor agent run with the default Claude judge needs Claude auth as well; `[evaluation] backend = "cursor"` with `model = "cursor/claude-opus-5-5"` (or `--eval-backend cursor`) judges with `cursor-agent` instead.
 
 #### Gemini CLI
 

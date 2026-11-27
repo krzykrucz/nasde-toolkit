@@ -137,7 +137,7 @@ def _prepare_task_environments(config: ProjectConfig, variant_dir: Path) -> tupl
       **Claude** carrier (``/app/.claude/skills/...``), built unconditionally so
       Claude stays byte-identical and tested.
     - ``extra_skill_dirs`` — the same plugin / ``[[skill]]`` skill directories
-      as a host-path list, fed to **Codex/Gemini** through Harbor's native
+      as a host-path list, fed to **Codex/Gemini/Cursor** through Harbor's native
       ``config.agent.skills`` (those CLIs scan only a HOME-scoped dir, never the
       ``/app`` cwd the sandbox map targets). The claude-vs-native choice is made
       per agent at merge time in ``_refresh_agent_skills``. See ADR-012.
@@ -582,7 +582,7 @@ def _ensure_harbor_config(
     pointing at now-deleted worktree paths.
 
     ``extra_skill_dirs`` carries the same plugin / ``[[skill]]`` directories as
-    a host-path list for the Codex/Gemini native channel (``config.agent.skills``);
+    a host-path list for the Codex/Gemini/Cursor native channel (``config.agent.skills``);
     Claude ignores it (its copies ride ``extra_sandbox_files``). See ADR-012.
     """
     harbor_config_path = variant_dir / "harbor_config.json"
@@ -689,7 +689,7 @@ def _refresh_agent_skills(
     """Rebuild the agent's ``skills`` list, preserving hand-authored entries.
 
     nasde owns the entries derived from **two** sources, both routed through
-    Harbor's native ``config.agent.skills`` for Codex/Gemini:
+    Harbor's native ``config.agent.skills`` for Codex/Gemini/Cursor:
 
     1. the variant's ``agents_skills/`` / ``gemini_skills/`` snapshot subdirs
        (``_collect_native_skill_dirs``), and
