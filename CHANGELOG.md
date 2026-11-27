@@ -9,6 +9,20 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the release procedure.
 
 ## [Unreleased]
 
+### Added
+- **Cursor support (agent + judge).** Variants can run Cursor's
+  `cursor-agent` CLI with `agent = "cursor"` and a prefixed model
+  (`model = "cursor/composer-2.5"`); instructions come from `AGENTS.md`,
+  skills from `cursor_skills/` (native `~/.cursor/skills`), effort from
+  `reasoning_effort`. Auth is `CURSOR_API_KEY`
+  (`source scripts/export_cursor_api_key.sh`). `[evaluation] backend =
+  "cursor"` (or `--eval-backend cursor`) runs the judge read-only via
+  `cursor-agent -p --mode ask`. Cursor agent steps now reach Opik with
+  per-step tokens and cost. Bundled prices for `cursor/composer-2.5`,
+  `cursor/claude-opus-5-5` and `cursor/claude-sonnet-5-5` (list rates, no
+  Teams surcharge); other `cursor/*` models fall back to Harbor's estimate.
+  Every trial's economics gain `cost_source`. See ADR-015. ([#NN])
+
 ### Changed
 - **Bundled Codex examples run on `gpt-6.1-sol`.** Every Codex variant in the
   examples moves from `gpt-5.4` (no longer offered to ChatGPT-plan accounts) to
@@ -540,7 +554,8 @@ Following multi-agent code review, nine refinements:
   hiding it as Rich markup.
 
 ### Security
-- Pin `litellm>=1.83.7` to address [GHSA-xqmj-j6mv-4862][gh-litellm-2026-04]. ([#31])
+- Pin `litellm>=1.83.7` to address [GHSA-xqmj-j6mv-4862][#NN]: https://github.com/NoesisVision/nasde-toolkit/pull/NN
+[gh-litellm-2026-04]. ([#31])
 
 ### Docs
 - README: clarified how NASDE is meant to be used end-to-end.
