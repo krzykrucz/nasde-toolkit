@@ -283,6 +283,7 @@ def test_assessment_summary_includes_economics(tmp_path: Path) -> None:
     # sonnet-5-5 $2/$10/$0.10 cached (ADR-014): fresh 0.2M*2 + cached 0.8M*0.10 + 0.06M*10 = 1.08
     assert summary.cost_usd == pytest.approx(1.08)
     assert summary.pricing_as_of == "2026-10-14"
+    assert summary.cost_source == "pricing.toml"
     assert not hasattr(summary, "cost_efficiency")  # removed: arbitrary zero → use Pareto front
     assert not hasattr(summary, "token_efficiency")
 
@@ -855,3 +856,14 @@ def test_prompt_procedure_is_workspace_first_without_diff() -> None:
     )
     assert "1. Use `Glob` to discover all output files in the workspace." in prompt
     assert "Start from the agent diff" not in prompt
+
+
+def test_judge_model_label_prefixes_bare_model_for_cursor_backend() -> None:
+    from nasde_toolkit.evaluator import _judge_model_label
+
+    assert _judge_model_label(EvaluationConfig(backend="cursor", model="claude-opus-5-5")) == "cursor/claude-opus-5-5"
+    assert (
+        _judge_model_label(EvaluationConfig(backend="cursor", model="cursor/claude-opus-5-5"))
+        == "cursor/claude-opus-5-5"
+    )
+    assert _judge_model_label(EvaluationConfig(backend="claude", model="claude-opus-5-5")) == "claude-opus-5-5"

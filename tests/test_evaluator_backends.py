@@ -452,3 +452,53 @@ def test_cursor_backend_warns_on_allowed_tools(capsys: pytest.CaptureFixture[str
 def test_cursor_backend_silent_without_allowed_tools(capsys: pytest.CaptureFixture[str]) -> None:
     CursorSubprocessBackend()._warn_unsupported_options(EvaluationConfig(max_turns=5))
     assert capsys.readouterr().out == ""
+
+
+def _stub_cursor_backend(monkeypatch: pytest.MonkeyPatch) -> tuple[CursorSubprocessBackend, dict]:
+    backend = CursorSubprocessBackend()
+    captured: dict = {}
+
+    async def fake_run(cmd: list[str], cwd: Path, env: dict[str, str]) -> str:
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["cwd_existed"] = cwd.exists()
+        return "{}"
+
+    monkeypatch.setattr(backend, "_run_subprocess", fake_run)
+    monkeypatch.setattr(backend, "validate_cli_installed", lambda: None)
+    monkeypatch.setattr(backend, "validate_auth", lambda: None)
+    return backend, captured
+
+
+def test_cursor_run_evaluation_with_context_uses_temp_cwd_and_cleans_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    backend, captured = _stub_cursor_backend(monkeypatch)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    config = EvaluationConfig(backend="cursor", append_system_prompt="be strict")
+
+    asyncio.run(backend.run_evaluation("the prompt", workspace, config, tmp_path))
+
+    assert captured["cwd"] != workspace
+    assert captured["cwd_existed"]
+    assert captured["cmd"][-2:] == ["--", "the prompt"]
+    assert str(workspace) in captured["cmd"]
+    assert not captured["cwd"].exists()
+
+
+def test_cursor_run_evaluation_without_context_runs_in_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    backend, captured = _stub_cursor_backend(monkeypatch)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    asyncio.run(backend.run_evaluation("the prompt", workspace, EvaluationConfig(backend="cursor"), tmp_path))
+
+    assert captured["cwd"] == workspace
+    assert captured["cmd"][-2:] == ["--", "the prompt"]
