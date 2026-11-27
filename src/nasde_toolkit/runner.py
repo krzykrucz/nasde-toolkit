@@ -137,7 +137,7 @@ def _prepare_task_environments(config: ProjectConfig, variant_dir: Path) -> tupl
       **Claude** carrier (``/app/.claude/skills/...``), built unconditionally so
       Claude stays byte-identical and tested.
     - ``extra_skill_dirs`` — the same plugin / ``[[skill]]`` skill directories
-      as a host-path list, fed to **Codex/Gemini** through Harbor's native
+      as a host-path list, fed to **Codex/Gemini/Cursor** through Harbor's native
       ``config.agent.skills`` (those CLIs scan only a HOME-scoped dir, never the
       ``/app`` cwd the sandbox map targets). The claude-vs-native choice is made
       per agent at merge time in ``_refresh_agent_skills``. See ADR-012.
@@ -345,7 +345,7 @@ def _collect_sandbox_files(variant_dir: Path) -> dict[str, str]:
     """Build the sandbox_files map for a variant.
 
     Only Claude skills ride sandbox_files (its cwd ``.claude/skills/`` is a
-    discovery root). Codex/Gemini skills are NOT collected here — they go
+    discovery root). Codex/Gemini/Cursor skills are NOT collected here — they go
     through Harbor's native ``config.agent.skills`` list via
     ``_collect_native_skill_dirs`` / ``_refresh_agent_skills`` (see ADR-012).
     """
@@ -582,7 +582,7 @@ def _ensure_harbor_config(
     pointing at now-deleted worktree paths.
 
     ``extra_skill_dirs`` carries the same plugin / ``[[skill]]`` directories as
-    a host-path list for the Codex/Gemini native channel (``config.agent.skills``);
+    a host-path list for the Codex/Gemini/Cursor native channel (``config.agent.skills``);
     Claude ignores it (its copies ride ``extra_sandbox_files``). See ADR-012.
     """
     harbor_config_path = variant_dir / "harbor_config.json"
@@ -689,9 +689,9 @@ def _refresh_agent_skills(
     """Rebuild the agent's ``skills`` list, preserving hand-authored entries.
 
     nasde owns the entries derived from **two** sources, both routed through
-    Harbor's native ``config.agent.skills`` for Codex/Gemini:
+    Harbor's native ``config.agent.skills`` for Codex/Gemini/Cursor:
 
-    1. the variant's ``agents_skills/`` / ``gemini_skills/`` snapshot subdirs
+    1. the variant's ``agents_skills/`` / ``gemini_skills/`` / ``cursor_skills/`` snapshot subdirs
        (``_collect_native_skill_dirs``), and
     2. ``[[skill]]`` by-reference + ``[nasde.plugin]`` skills resolved this run
        (``extra_skill_dirs``), which for Claude instead ride ``sandbox_files``.
@@ -729,7 +729,7 @@ def _referenced_skill_dirs_for_agent(effective_type: str, extra_skill_dirs: list
 
     Claude's referenced/plugin skills already ride ``sandbox_files`` to its
     cwd ``/app/.claude/skills`` discovery root, so feeding them here too would
-    double-inject. Codex/Gemini get the dir list and warn on bad frontmatter.
+    double-inject. Codex/Gemini/Cursor get the dir list and warn on bad frontmatter.
     """
     if effective_type == "claude":
         return []

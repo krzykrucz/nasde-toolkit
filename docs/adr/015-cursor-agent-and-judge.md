@@ -66,11 +66,13 @@ flags.
 
    `append_system_prompt` uses a rule because rules are the documented CLI
    mechanism ("The CLI agent supports the same rules system as the editor",
-   cursor.com/docs/cli/using). An e2e marker check confirms that headless
-   `-p --mode ask` loads an always-apply rule from the temp cwd. If it does
-   not, the text is put at the start of the judge prompt instead. That is a
-   user-turn instruction rather than a system-level one, but it always
-   arrives.
+   cursor.com/docs/cli/using). PENDING: an e2e marker check that headless
+   `-p --mode ask` loads an always-apply rule from the temp cwd has not been
+   run. The real-CLI flag check (`--trust`, `--mode ask`, `--add-dir`,
+   `--approve-mcps`) and native `~/.cursor/skills` discovery have not been run
+   against a real cursor-agent either; they gate release, not merge. A
+   prompt-prefix fallback (a user-turn instruction rather than a system-level
+   one) is not implemented.
 
    Alternative considered: a `sessionStart` hook returning
    `additional_context`, which the docs describe as added to the initial
@@ -133,8 +135,8 @@ flags.
 - Cursor trials get tokens, cost, Opik spans and native skills on par with
   Claude.
 - Judge differences from Claude are explicit: fixed read-only tool set, no
-  turn cap, system prompt delivered as a rule file (or a prompt prefix if the
-  e2e marker check fails), chats persisted locally.
+  turn cap, system prompt delivered as a rule file (unverified until the pending
+  e2e marker check is run; no prompt-prefix fallback), chats persisted locally.
 - Opik and the trajectory show Harbor's cost; nasde's summaries show the
   catalog cost. A `pricing.toml` override (e.g. the Teams Cursor Token Rate)
   changes only nasde's figure — the same as for every other agent.

@@ -4,7 +4,7 @@ Single source of truth shared by the run path (evaluator.py → assessment_summa
 and the export path (results_exporter.py → metrics.json), so the two never diverge.
 
 Token volumes come from the trajectory's top-level ``final_metrics`` (written by
-Harbor for both Claude and Codex agents):
+Harbor for Claude, Codex and Cursor agents):
   input       = total_prompt_tokens            (full, cache included)
   output      = total_completion_tokens + extra.reasoning_output_tokens
   cached      = total_cached_tokens            (cache reads)
@@ -139,9 +139,10 @@ def _harbor_estimated_economics(model: str, usage: TokenUsage, trajectory: dict)
     cost_usd = final_metrics.get("total_cost_usd")
     harbor_source = (final_metrics.get("extra") or {}).get("cost_source", "unknown")
     cost_source = f"harbor:{harbor_source}" if cost_usd is not None else None
+    fallback_note = f"using Harbor estimate ({cost_source})" if cost_source else "cost left unset"
     console.print(
         f"  [yellow]No pricing for model {model!r} in pricing.toml — "
-        f"{'using Harbor estimate (' + cost_source + ')' if cost_source else 'cost left unset'}. "
+        f"{fallback_note}. "
         f"Add it to pricing.toml for catalog-priced cost.[/yellow]"
     )
     return {
