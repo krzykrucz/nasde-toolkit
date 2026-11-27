@@ -141,3 +141,32 @@ def test_trajectory_steps_without_rates_have_tokens_but_no_cost() -> None:
 def test_user_steps_get_no_metrics() -> None:
     trajectory = _agent()._convert_events_to_trajectory(EVENTS)
     assert all(s.metrics is None for s in trajectory.steps if s.source == "user")
+
+
+def test_usage_lands_on_last_assistant_step_of_a_shared_model_call() -> None:
+    events = [
+        EVENTS[0],
+        EVENTS[1],
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "first"}]},
+            "session_id": "s1",
+            "model_call_id": "m1",
+            "timestamp_ms": 1_700_000_000_000,
+        },
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "second"}]},
+            "session_id": "s1",
+            "model_call_id": "m1",
+            "timestamp_ms": 1_700_000_000_500,
+        },
+        EVENTS[3],
+        EVENTS[-1],
+    ]
+    trajectory = _agent()._convert_events_to_trajectory(events)
+    agent_steps = [s for s in trajectory.steps if s.source == "agent"]
+    assert len(agent_steps) == 2
+    assert agent_steps[0].metrics is None
+    assert agent_steps[1].metrics is not None
+    assert agent_steps[1].metrics.completion_tokens == 50

@@ -110,7 +110,7 @@ class ConfigurableCursor(CursorCli):
         thinking: list[CursorThinkingBlock],
     ) -> Step:
         if event.model_call_id is not None:
-            self._model_call_step_ids.setdefault(event.model_call_id, step_id)
+            self._model_call_step_ids[event.model_call_id] = step_id
         return super()._build_agent_step(event, step_id, thinking)
 
     def _apply_tool_call_event(self, event: CursorToolCall, step: Step) -> None:  # type: ignore[override]
