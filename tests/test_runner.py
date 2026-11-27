@@ -21,6 +21,7 @@ from nasde_toolkit.runner import (
     _ensure_auth,
     _generate_harbor_config,
     _is_codex_agent,
+    _is_cursor_agent,
     _is_gemini_agent,
     collect_available_variants,
     load_variant_agent_type,
@@ -547,3 +548,76 @@ def test_collect_sandbox_files_omits_claude_config_when_absent(tmp_path: Path) -
     result = _collect_sandbox_files(variant_dir)
 
     assert "/logs/agent/sessions/.claude.json" not in result
+
+
+# ---------------------------------------------------------------------------
+# cursor agent family
+# ---------------------------------------------------------------------------
+
+CURSOR_PATH = "nasde_toolkit.agents.configurable_cursor:ConfigurableCursor"
+
+
+def test_load_variant_agent_type_cursor(tmp_path: Path) -> None:
+    (tmp_path / "variant.toml").write_text('agent = "cursor"\nmodel = "cursor/composer-2.5"')
+    assert load_variant_agent_type(tmp_path) == "cursor"
+
+
+def test_is_cursor_agent() -> None:
+    assert _is_cursor_agent(CURSOR_PATH)
+    assert _is_cursor_agent("harbor.agents.installed.cursor_cli:CursorCli")
+    assert not _is_cursor_agent("nasde_toolkit.agents.configurable_claude:ConfigurableClaude")
+    assert not _is_cursor_agent(None)
+
+
+def test_generate_harbor_config_cursor_variant_with_skills(tmp_path: Path) -> None:
+    variant_dir = tmp_path / "variants" / "cursor-skilled"
+    variant_dir.mkdir(parents=True)
+    (variant_dir / "AGENTS.md").write_text("# Cursor")
+    (variant_dir / "variant.toml").write_text('agent = "cursor"')
+    skill_dir = variant_dir / "cursor_skills" / "tactical-ddd"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tactical-ddd\ndescription: x\n---\n")
+
+    _generate_harbor_config(variant_dir, "cursor-skilled")
+
+    agent = json.loads((variant_dir / "harbor_config.json").read_text())["agents"][0]
+    assert agent["import_path"] == CURSOR_PATH
+    assert "/app/AGENTS.md" in agent["kwargs"]["sandbox_files"]
+    assert not any(".cursor/skills" in k for k in agent["kwargs"]["sandbox_files"])
+    assert agent["skills"] == [str(skill_dir.resolve())]
+
+
+def test_ensure_auth_cursor_with_api_key() -> None:
+    with patch.dict("os.environ", {"CURSOR_API_KEY": "key_test"}, clear=True):
+        _ensure_auth(CURSOR_PATH)
+
+
+def test_ensure_auth_cursor_missing_raises(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.dict("os.environ", {}, clear=True), pytest.raises(SystemExit):
+        _ensure_auth(CURSOR_PATH)
+    out = capsys.readouterr().out
+    assert "CURSOR_API_KEY" in out
+    assert ".env" in out
+    assert "export_cursor_api_key.sh" in out
+
+
+def _cursor_project(tmp_project: ProjectConfig) -> Path:
+    variant_config_path = tmp_project.project_dir / "variants" / "vanilla" / "harbor_config.json"
+    config = json.loads(variant_config_path.read_text())
+    config["agents"][0]["import_path"] = CURSOR_PATH
+    variant_config_path.write_text(json.dumps(config))
+    return variant_config_path
+
+
+def test_build_merged_config_passes_no_pricing_kwarg_for_cursor(tmp_project: ProjectConfig) -> None:
+    result = _build_merged_config(
+        config=tmp_project,
+        variant_config_path=_cursor_project(tmp_project),
+        variant_name="vanilla",
+        model="cursor/composer-2.5",
+        timeout_sec=None,
+        tasks_filter=None,
+    )
+    agent = result["agents"][0]
+    assert agent["import_path"] == CURSOR_PATH
+    assert "pricing" not in agent.get("kwargs", {})

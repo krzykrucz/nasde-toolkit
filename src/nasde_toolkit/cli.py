@@ -198,7 +198,7 @@ def run(
         "--effort",
         help="Reasoning-effort override, passed straight to the agent (the agent validates it). "
         "Typical levels — claude: low/medium/high/xhigh/max; codex: none/minimal/low/medium/high/xhigh; "
-        "gemini: minimal/low/medium/high. "
+        "gemini: minimal/low/medium/high; cursor: low/medium/high/xhigh/max. "
         "Default: variant.toml reasoning_effort, else Harbor family default.",
     ),
     timeout: int | None = typer.Option(
@@ -767,7 +767,7 @@ def _print_run_header(
     env_str = harbor_env or "docker"
     attempts_str = f"{attempts}" if attempts > 1 else "1"
     timeout_str = f"{timeout}s (override)" if timeout is not None else "per task.toml"
-    agent_labels = {"codex": "Codex (OpenAI)", "gemini": "Gemini CLI (Google)"}
+    agent_labels = {"codex": "Codex (OpenAI)", "gemini": "Gemini CLI (Google)", "cursor": "Cursor CLI"}
     agent_label = agent_labels.get(agent_type, "Claude Code")
     effort_str = effort or "family default"
     console.print(
