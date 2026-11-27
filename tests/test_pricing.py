@@ -277,3 +277,25 @@ def test_effective_pricing_with_source_three_layers(tmp_path: Path, empty_user_l
 def test_load_pricing_layered_matches_effective_keys(tmp_path: Path, empty_user_layer: Path) -> None:
     _write_pricing(tmp_path, _model_block("my-model", 7.0, 8.0))
     assert set(load_pricing_layered(tmp_path)) == set(effective_pricing_with_source(tmp_path))
+
+
+def test_bundled_cursor_entries_use_cursor_list_rates() -> None:
+    pricing = load_pricing()
+    composer = pricing["cursor/composer-2.5"]
+    assert (composer.input_per_1m, composer.cached_input_per_1m, composer.output_per_1m) == (0.5, 0.2, 2.5)
+    assert composer.cache_write_per_1m is None
+    opus = pricing["cursor/claude-opus-5-5"]
+    assert (opus.input_per_1m, opus.cache_write_per_1m, opus.cached_input_per_1m, opus.output_per_1m) == (
+        4.0,
+        5.0,
+        0.20,
+        20.0,
+    )
+    sonnet = pricing["cursor/claude-sonnet-5-5"]
+    assert (sonnet.input_per_1m, sonnet.cache_write_per_1m, sonnet.cached_input_per_1m, sonnet.output_per_1m) == (
+        2.0,
+        2.5,
+        0.10,
+        10.0,
+    )
+    assert {p.as_of for p in (composer, opus, sonnet)} == {"2026-11-23"}
