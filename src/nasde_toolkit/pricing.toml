@@ -53,6 +53,18 @@
 # pricing pages (every pre-existing rate unchanged; Opus 5.5, Sonnet 5.5, the
 # Claude 4.x legacy models and the GPT-5.6 / GPT-6 families added) — CONFIRM
 # before publishing any cost figures.
+#
+# Cursor (cursor/*) entries are Cursor's published list rates for models run
+# through cursor-agent (ADR-015). Cursor-owned models (Composer) draw from the
+# plan's weekly pool first; these are the rates beyond it. Third-party models
+# via Cursor bill at Cursor's listed API rates, whose cache write is 1.25x
+# input — NOT the 2x 1-hour rate of the direct claude-* entries above. Teams /
+# Enterprise plans add a "Cursor Token Rate" of +$0.25/M on input, output and
+# cached tokens for third-party models; it is plan-specific and NOT included —
+# add it via a project or ~/.nasde pricing.toml override (ADR-013). Keys use the
+# base slug; set effort with reasoning_effort, not Cursor's -low/-high slugs.
+# A cursor/* model missing here falls back to Harbor's own estimate
+# (cost_source = "harbor:...").
 
 [models."gpt-6-astra"]
 input_per_1m = 10.0
@@ -241,3 +253,26 @@ cached_input_per_1m = 0.10
 cache_write_per_1m = 2.0
 as_of = "2026-10-14"
 source = "https://platform.claude.com/docs/en/about-claude/pricing"
+
+[models."cursor/composer-2.5"]
+input_per_1m = 0.5
+output_per_1m = 2.5
+cached_input_per_1m = 0.2
+as_of = "2026-11-23"
+source = "https://cursor.com/docs/models-and-pricing"
+
+[models."cursor/claude-opus-5-5"]
+input_per_1m = 4.0
+output_per_1m = 20.0
+cached_input_per_1m = 0.20
+cache_write_per_1m = 5.0
+as_of = "2026-11-23"
+source = "https://cursor.com/docs/models-and-pricing"
+
+[models."cursor/claude-sonnet-5-5"]
+input_per_1m = 2.0
+output_per_1m = 10.0
+cached_input_per_1m = 0.10
+cache_write_per_1m = 2.5
+as_of = "2026-11-23"
+source = "https://cursor.com/docs/models-and-pricing"
