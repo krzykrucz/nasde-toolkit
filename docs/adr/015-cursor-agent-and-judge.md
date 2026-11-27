@@ -112,6 +112,9 @@ flags.
    Gemini. When a `cursor/*` model is not in the catalog, nasde falls back to
    the trajectory's `final_metrics.total_cost_usd` and records `cost_source`
    so the figure is traceable. The fallback applies to Cursor agents only.
+   The `nasde run` summary marks such a figure with `*` and a footnote, so a
+   Harbor estimate is never mistaken for a catalog price (Codex and Gemini
+   never show a cost that is not from the catalog, so they need no marker).
 
    Alternative considered: pass the resolved catalog rates into `CursorCli`'s
    `pricing` kwarg, so Harbor, Opik and nasde share one rate source. Rejected:
@@ -129,6 +132,28 @@ flags.
    `ConfigurableCursor` attaches per-step `metrics` (tokens + cost) from
    `cursor-agent`'s per-call `usage` events, giving Cursor the same per-step
    Opik spans and trace cost roll-up Claude has.
+9. **Deliberately unchanged (reviewed, not done).**
+   - *Model-name normalization.* `cursor/<slug>` is validated by Harbor only
+     as `provider/model`. A bare slug (`composer-2.5`) fails in every trial,
+     after the image build, with Harbor's `ValueError`; nasde adds no
+     preflight and does not rewrite the model. This matches Gemini, whose
+     agent has the same `provider/model` rule and no nasde check, and keeps one
+     rule per family instead of a Cursor-only exception. Considered: reject
+     unless `cursor/`, prepend `cursor/` to bare slugs, always normalize to
+     `cursor/<slug>`, an override of Harbor's `_model_arg`, and a per-family
+     normalizer (which would also change Codex and Gemini). The cost of
+     leaving it: a late failure for a bare slug, and a null `cost_usd` (not an
+     error) for a wrong provider such as `anthropic/claude-opus-5-5`, because
+     pricing and the Harbor fallback key on `cursor/`. Revisit with the
+     per-family normalizer if it bites.
+   - *Judge-model stamp.* The judge's `evaluator_model` stamp is the raw
+     `[evaluation] model`, so a Cursor judge serving `claude-opus-5-5` is
+     stamped like the Claude judge and their evaluations can share a cluster
+     in `assessment_summary.json`. A `cursor/` stamp or a backend-aware
+     grouping key was considered and rejected: judge execution is moving to
+     Harbor, which will own judge identity and model naming, so a nasde-side
+     fix would be thrown away. Until then, do not mix judge backends within one
+     job when comparing scores.
 
 ## Consequences
 
@@ -140,6 +165,10 @@ flags.
 - Opik and the trajectory show Harbor's cost; nasde's summaries show the
   catalog cost. A `pricing.toml` override (e.g. the Teams Cursor Token Rate)
   changes only nasde's figure — the same as for every other agent.
+- A Cursor model without the `cursor/` prefix fails per trial (as for Gemini);
+  a wrong provider silently loses the catalog price. See Decision 9.
+- Mixing judge backends that serve the same model name in one job averages
+  them together. See Decision 9.
 - `cost_source` is a new economics field (all agents; `"pricing.toml"` for
   catalog-priced trials).
 - `[[skill]]`/`[nasde.plugin]` skills also reach every agent's
