@@ -8,12 +8,17 @@ Harbor for both Claude and Codex agents):
   input       = total_prompt_tokens            (full, cache included)
   output      = total_completion_tokens + extra.reasoning_output_tokens
   cached      = total_cached_tokens            (cache reads)
-  cache_write = extra.total_cache_creation_input_tokens
+  cache_write = extra.total_cache_creation_input_tokens  (Claude)
+              or extra.usage_totals.cacheWriteTokens   (Cursor)
   total       = input + output
 
 Cost is cache-aware (ADR-014): fresh input at the full rate, cache writes and
 reads at their catalog rates. The cache-free ceiling is derivable from the
 recorded token volumes and is not stored.
+
+Cursor models (``cursor/*``) missing from the catalog fall back to Harbor's own
+trajectory cost (``final_metrics.total_cost_usd``); ``cost_source`` records where
+every figure came from (ADR-015).
 """
 
 from __future__ import annotations
@@ -22,7 +27,13 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from rich.console import Console
+
 from nasde_toolkit.pricing import ModelPrice, compute_cost_usd, pricing_as_of
+
+console = Console()
+
+CURSOR_MODEL_PREFIX = "cursor/"
 
 
 @dataclass
@@ -48,7 +59,7 @@ def extract_token_usage(trajectory: dict) -> TokenUsage | None:
     completion_tokens = final_metrics.get("total_completion_tokens", 0) or 0
     reasoning_tokens = extra.get("reasoning_output_tokens", 0) or 0
     cached_tokens = final_metrics.get("total_cached_tokens", 0) or 0
-    cache_write_tokens = extra.get("total_cache_creation_input_tokens", 0) or 0
+    cache_write_tokens = _cache_write_tokens(extra)
     output_tokens = completion_tokens + reasoning_tokens
     return TokenUsage(
         input_tokens=prompt_tokens,
@@ -87,14 +98,17 @@ def build_trial_economics(
     """Assemble the economics block for one trial (used by run and export paths).
 
     Only raw, baseline-invariant signals are recorded — token volumes, USD cost,
-    and the price catalog date. Quality-vs-cost comparison is a Pareto front over
-    these raw axes (in the nasde-benchmark-runner skill), not a scalar
-    score/cost ratio whose zero point is arbitrary. See ADR-011.
+    the price catalog date and the cost's source. Quality-vs-cost comparison is a
+    Pareto front over these raw axes (in the nasde-benchmark-runner skill), not a
+    scalar score/cost ratio whose zero point is arbitrary. See ADR-011. A Cursor
+    model absent from the catalog uses Harbor's trajectory cost (ADR-015).
     """
     trajectory = read_trajectory(trial_dir)
     usage = extract_token_usage(trajectory) if trajectory is not None else None
-    if usage is None:
+    if trajectory is None or usage is None:
         return _empty_economics(model)
+    if model not in pricing and model.startswith(CURSOR_MODEL_PREFIX):
+        return _harbor_estimated_economics(model, usage, trajectory)
     cost_usd = compute_cost_usd(
         usage.input_tokens,
         usage.output_tokens,
@@ -108,6 +122,34 @@ def build_trial_economics(
         "token_usage": asdict(usage),
         "cost_usd": cost_usd,
         "pricing_as_of": pricing_as_of(model, pricing) if cost_usd is not None else None,
+        "cost_source": "pricing.toml" if cost_usd is not None else None,
+    }
+
+
+def _cache_write_tokens(extra: dict) -> int:
+    claude_writes = extra.get("total_cache_creation_input_tokens")
+    if claude_writes:
+        return int(claude_writes)
+    usage_totals = extra.get("usage_totals") or {}
+    return int(usage_totals.get("cacheWriteTokens", 0) or 0)
+
+
+def _harbor_estimated_economics(model: str, usage: TokenUsage, trajectory: dict) -> dict:
+    final_metrics = trajectory.get("final_metrics") or {}
+    cost_usd = final_metrics.get("total_cost_usd")
+    harbor_source = (final_metrics.get("extra") or {}).get("cost_source", "unknown")
+    cost_source = f"harbor:{harbor_source}" if cost_usd is not None else None
+    console.print(
+        f"  [yellow]No pricing for model {model!r} in pricing.toml — "
+        f"{'using Harbor estimate (' + cost_source + ')' if cost_source else 'cost left unset'}. "
+        f"Add it to pricing.toml for catalog-priced cost.[/yellow]"
+    )
+    return {
+        "model_name": model,
+        "token_usage": asdict(usage),
+        "cost_usd": cost_usd,
+        "pricing_as_of": None,
+        "cost_source": cost_source,
     }
 
 
@@ -117,4 +159,5 @@ def _empty_economics(model: str) -> dict:
         "token_usage": None,
         "cost_usd": None,
         "pricing_as_of": None,
+        "cost_source": None,
     }
