@@ -91,7 +91,7 @@ Alternatively put `CURSOR_API_KEY=...` in `.env` in the benchmark project dir (o
 
 ### Combined setup for cross-agent runs
 
-Resolve `<SKILL_SCRIPTS>` first, then run all three.
+Resolve `<SKILL_SCRIPTS>` first, then run all four (the Cursor script lives in the nasde-toolkit repo's `scripts/`, not in `<SKILL_SCRIPTS>`; run it from a checkout, or use `CURSOR_API_KEY` / `.env`).
 
 **macOS / Linux / Windows WSL:**
 ```bash
@@ -99,6 +99,7 @@ SKILL_SCRIPTS=~/.claude/skills/nasde-benchmark-runner/scripts   # adjust if --sc
 source $SKILL_SCRIPTS/export_oauth_token.sh         # Claude (subscription)
 source $SKILL_SCRIPTS/export_codex_oauth_token.sh   # Codex (subscription) — or: export CODEX_API_KEY=...
 source $SKILL_SCRIPTS/export_gemini_oauth_token.sh  # Gemini (Google account) — or: export GEMINI_API_KEY=...
+source scripts/export_cursor_api_key.sh            # Cursor (API key; from a nasde-toolkit checkout) — or: export CURSOR_API_KEY=...
 ```
 
 **Windows PowerShell:**
@@ -107,6 +108,7 @@ $SkillScripts = "$env:USERPROFILE\.claude\skills\nasde-benchmark-runner\scripts"
 . "$SkillScripts\export_oauth_token.ps1"
 . "$SkillScripts\export_codex_oauth_token.ps1"
 . "$SkillScripts\export_gemini_oauth_token.ps1"
+. scripts\export_cursor_api_key.ps1   # Cursor (from a nasde-toolkit checkout) — or: $env:CURSOR_API_KEY = '...'
 ```
 
 ### Windows: cmd.exe

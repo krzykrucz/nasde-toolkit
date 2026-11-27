@@ -554,8 +554,7 @@ Following multi-agent code review, nine refinements:
   hiding it as Rich markup.
 
 ### Security
-- Pin `litellm>=1.83.7` to address [GHSA-xqmj-j6mv-4862][#NN]: https://github.com/NoesisVision/nasde-toolkit/pull/NN
-[gh-litellm-2026-04]. ([#31])
+- Pin `litellm>=1.83.7` to address [GHSA-xqmj-j6mv-4862][gh-litellm-2026-04]. ([#31])
 
 ### Docs
 - README: clarified how NASDE is meant to be used end-to-end.
@@ -752,4 +751,5 @@ Initial release under the **nasde-toolkit** name (rebrand from
 [#88]: https://github.com/NoesisVision/nasde-toolkit/pull/88
 [#89]: https://github.com/NoesisVision/nasde-toolkit/pull/89
 [#90]: https://github.com/NoesisVision/nasde-toolkit/pull/90
+[#NN]: https://github.com/NoesisVision/nasde-toolkit/pull/NN
 [gh-litellm-2026-04]: https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862

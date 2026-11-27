@@ -4,7 +4,7 @@
 
 NASDE evaluates AI coding agents (e.g. Claude Code, OpenAI Codex, Gemini CLI, Cursor CLI) on programming tasks. It uses **Harbor** as the execution engine running agents in isolated sandbox environments and **Opik** as the observability platform for tracking results.
 
-Key design: evaluation is **two-stage** — Harbor assesses functional correctness (tests pass/fail), then a separate reviewer agent (the `claude` or `codex` CLI, spawned as a subprocess) assesses architectural quality of the generated code.
+Key design: evaluation is **two-stage** — Harbor assesses functional correctness (tests pass/fail), then a separate reviewer agent (the `claude`, `codex` or `cursor-agent` CLI, spawned as a subprocess) assesses architectural quality of the generated code.
 
 ---
 
